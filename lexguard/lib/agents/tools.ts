@@ -164,6 +164,42 @@ export function makeResearchTools(actor: string, state: { candidates: Map<string
       },
     }),
     betaZodTool({
+      name: "web_search",
+      description:
+        "Recherche web (Keenable) — complément au corpus pour la jurisprudence, la doctrine, les circulaires, ou vérifier l'état d'un texte absent de la base DILA. Jamais pour inventer : cite l'URL renvoyée.",
+      inputSchema: z.object({ query: z.string() }),
+      run: async ({ query }) => {
+        const key = process.env.KEENABLE_API_KEY;
+        if (!key) return "Recherche web indisponible (KEENABLE_API_KEY non configurée).";
+        const t0 = Date.now();
+        try {
+          const res = await fetch("https://api.keenable.ai/v1/search", {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-api-key": key },
+            body: JSON.stringify({ query }),
+            signal: AbortSignal.timeout(20_000),
+          });
+          if (!res.ok) return `Recherche web : erreur ${res.status}.`;
+          const data = (await res.json()) as Record<string, unknown>;
+          const arr = (Array.isArray(data)
+            ? data
+            : (data.results ?? data.data ?? data.hits ?? [])) as Array<Record<string, unknown>>;
+          await tracedQuery(actor, "recherche web (Keenable)", `« ${query} » (${Date.now() - t0} ms)`, "select 1");
+          const rows = arr.slice(0, 6).map((r) => {
+            const title = String(r.title ?? r.name ?? r.url ?? "");
+            const url = String(r.url ?? r.link ?? "");
+            const snippet = String(r.snippet ?? r.content ?? r.description ?? r.text ?? "")
+              .replace(/\s+/g, " ")
+              .slice(0, 280);
+            return `${title}\n   ${url}\n   ${snippet}`;
+          });
+          return rows.length ? rows.join("\n") : "Aucun résultat web.";
+        } catch (e) {
+          return `Recherche web indisponible (${e instanceof Error ? e.message : "erreur"}).`;
+        }
+      },
+    }),
+    betaZodTool({
       name: "submit_dossier",
       description: "Rend ton dossier : les articles (identifiants LEGIARTI) que le juge doit lire, chacun avec la raison de sa pertinence. Inclure la règle de compétence applicable, les règles de fond, et tout article qui pourrait rendre la disposition CONFORME. À appeler une fois, en dernier.",
       inputSchema: z.object({
