@@ -1,0 +1,20 @@
+/* Animation du wordmark adaptée de docs/Cicero – Animation du logo.html. */
+.cicero-logo{display:inline-flex;flex-direction:column;align-items:flex-start;color:var(--ink);text-decoration:none}
+.logo-word{font-family:var(--font-serif);font-weight:500;font-size:48px;letter-spacing:-.03em;line-height:1;display:inline-flex;color:var(--ink)}
+.logo-letter{display:inline-block;overflow:hidden;padding:.08em .01em .12em;margin:-.08em -.01em -.12em}
+.logo-letter>span{display:inline-block;transform:translateY(110%)}
+.logo-i{position:relative}
+.logo-dot,.logo-ring{position:absolute;left:50%;top:.105em;width:.15em;height:.15em;margin-left:-.075em;border-radius:50%;opacity:0}
+.logo-dot{background:var(--signal);transform:translateY(-1.6em) scale(.7)}
+.logo-ring{border:1px solid var(--signal);pointer-events:none}
+.logo-baseline{display:block;margin-top:10px;font:500 7px/1.5 var(--font-sans);letter-spacing:.22em;text-transform:uppercase;opacity:0;white-space:nowrap}
+.play .logo-letter>span{animation:logo-rise .9s var(--ease) forwards;animation-delay:calc(var(--n)*90ms + 150ms)}
+.play .logo-dot{animation:logo-drop .75s cubic-bezier(.3,0,.3,1) forwards;animation-delay:1.25s}
+.play .logo-ring{animation:logo-ripple .8s ease-out forwards;animation-delay:1.85s}
+.play .logo-baseline{animation:logo-baseline 1s ease-out forwards;animation-delay:2.1s}
+@keyframes logo-rise{to{transform:translateY(0)}}
+@keyframes logo-drop{0%{opacity:0;transform:translateY(-1.6em) scale(.7)}15%{opacity:1}60%{transform:translateY(0) scale(1)}75%{transform:translateY(-.12em) scale(1)}100%{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes logo-ripple{from{opacity:.55;transform:scale(1)}to{opacity:0;transform:scale(5)}}
+@keyframes logo-baseline{from{opacity:0;transform:scaleX(1.07);transform-origin:left}to{opacity:1;transform:scaleX(1);transform-origin:left}}
+@media(max-width:760px){.logo-word{font-size:40px}.logo-baseline{font-size:5.7px;margin-top:8px}}
+@media(prefers-reduced-motion:reduce){.logo-letter>span,.logo-dot,.logo-baseline{animation:none!important;transform:none!important;opacity:1!important}.logo-ring{display:none}}

@@ -1,63 +1,52 @@
 <!doctype html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>VC Analyst</title>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#F8F7F4"><meta name="description" content="Cicero — Repérez les contradictions avant qu’elles ne soient publiées.">
+  <title>Cicero — La clarté du droit</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='9' fill='%23F8F7F4'/%3E%3Ctext x='7' y='32' font-family='Georgia,serif' font-size='35' fill='%233A3D41'%3EC%3C/text%3E%3Ccircle cx='31' cy='10' r='3' fill='%23D91B4B'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/style.css">
-  <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+  <link rel="stylesheet" href="/static/logo.css">
+  <link rel="stylesheet" href="/static/tracking.css">
+  <script src="/static/mocks/analysis.js" defer></script>
+  <script src="/static/mocks/tracking.js" defer></script>
+  <script src="/static/app.js" defer></script>
+  <script src="/static/tracking.js" defer></script>
 </head>
 <body>
-  <header>
-    <div class="brand">[NOM] <span>analyste IA pour associates VC</span></div>
-    <nav>
-      <button id="tab-explorer" class="tab active">Explorer</button>
-      <button id="tab-analyst" class="tab" disabled>Analyste</button>
-    </nav>
-  </header>
+  <a class="skip-link" href="#query">Aller à l’analyse</a>
+  <header class="topbar"><a class="cicero-logo play" id="brand-home" href="#" aria-label="Cicero, accueil"><span class="logo-word" aria-hidden="true"><span class="logo-letter"><span style="--n:0">C</span></span><span class="logo-letter logo-i"><span style="--n:1">ı</span><i class="logo-dot"></i><i class="logo-ring"></i></span><span class="logo-letter"><span style="--n:2">c</span></span><span class="logo-letter"><span style="--n:3">e</span></span><span class="logo-letter"><span style="--n:4">r</span></span><span class="logo-letter"><span style="--n:5">o</span></span></span><span class="logo-baseline">La clarté du droit, la force de la technologie.</span></a><nav aria-label="Navigation principale"><button class="header-link active" id="nav-analysis" aria-current="page">Analyser</button><button class="header-link" id="nav-tracking">Textes suivis <span id="tracking-alert-count">6</span></button><button class="header-link history-link" id="history-button">Historique <span id="history-count">0</span></button><span class="nav-divider"></span><button class="icon-button" id="help-button" aria-label="Guide de démonstration"><span data-icon="help"></span></button></nav></header>
+  <main>
+    <section class="home-screen" id="home-screen" aria-labelledby="hero-title">
+      <div class="hero-content">
+        <p class="home-overline entrance" style="--entrance:0">L’intelligence au service de la cohérence du droit.</p>
+        <h1 id="hero-title" class="entrance" style="--entrance:1">Repérez les contradictions<br>avant qu’elles ne soient publiées.</h1>
+        <p class="hero-subtitle entrance" style="--entrance:2">Un projet de texte. Un regard sur tout le droit.</p>
+        <div class="analysis-workspace entrance" style="--entrance:3">
+          <form class="composer" id="analysis-form"><div class="composer-inner"><label class="sr-only" for="query">Décrivez le texte ou la question juridique à examiner</label><textarea id="query" maxlength="5000" placeholder="Décrivez ce que vous voulez vérifier…"></textarea><div class="composer-bottom"><span class="input-caption"><span data-icon="lock"></span>Votre texte reste dans ce navigateur</span><div class="composer-actions"><kbd>Ctrl / ⌘ + Entrée</kbd><button class="primary-button" id="launch-button" type="submit" disabled><span>Analyser</span><span data-icon="arrow"></span></button></div></div></div></form>
+          <p class="query-error" id="query-error" role="alert" hidden></p>
+          <div class="filter-bar entrance" id="filter-bar" style="--entrance:4"></div>
+          <div class="advanced-shell" id="advanced-shell"><div class="advanced-inner" id="advanced-options"></div></div>
+          <div class="examples-section entrance" style="--entrance:5"><p class="example-label">Essayer avec :</p><div class="examples" id="examples"></div></div>
 
-  <!-- Vue 1 : Explorer -->
-  <main id="view-explorer">
-    <div class="toolbar">
-      <select id="region"><option value="">Toutes les régions</option></select>
-      <input id="search" type="search" placeholder="Rechercher une startup, un secteur…">
-      <form id="resolve-form" class="resolve">
-        <input id="resolve-url" placeholder="…ou coller une URL / un LinkedIn de founder">
-        <button type="submit">Analyser</button>
-      </form>
-    </div>
-    <p id="count" class="muted"></p>
-    <div id="treemap"></div>
-  </main>
-
-  <!-- Vue 2 : Analyste -->
-  <main id="view-analyst" hidden>
-    <section class="head">
-      <div>
-        <h1 id="s-name"></h1>
-        <p id="s-meta" class="muted"></p>
-        <p id="s-desc"></p>
-      </div>
-      <div class="actions">
-        <button id="btn-refresh">Rafraîchir l'analyse</button>
-        <a id="memo-md" class="btn ghost" target="_blank">Mémo .md</a>
-        <a id="memo-html" class="btn ghost" target="_blank">Mémo HTML</a>
+        </div>
       </div>
     </section>
-    <p id="status" class="status" hidden></p>
-    <div class="layout">
-      <section id="pods" class="pods"></section>
-      <aside class="chat">
-        <h2>Chat</h2>
-        <div id="messages"></div>
-        <form id="chat-form">
-          <input id="chat-input" placeholder="Question sur la startup ou son secteur…" autocomplete="off">
-          <button type="submit">Envoyer</button>
-        </form>
-      </aside>
-    </div>
+    <section class="analysis-screen" id="analysis-screen" aria-label="Analyse en cours" hidden><div class="query-pill"><span data-icon="scan"></span><span id="running-query"></span><span class="tag">ANALYSE</span></div><div id="analysis-scene" aria-live="polite"></div></section>
+    <section class="results-screen" id="results-screen" aria-labelledby="results-title" hidden><div class="results-topline"><button class="text-button" id="new-analysis"><span data-icon="arrow"></span>Nouvelle analyse</button><span class="session-label">Cicero <span> / </span> Diagnostic</span><button class="text-button" id="edit-filters"><span data-icon="sliders"></span>Ajuster le cadrage</button></div><div id="diagnostic-context"></div><div class="query-pill result-query"><span data-icon="scan"></span><span id="result-query"></span><span class="tag" id="analysis-duration"></span></div><div id="results-content" aria-live="polite"></div></section>
+    <section class="tracking-screen" id="tracking-screen" aria-labelledby="tracking-title" hidden>
+      <div class="tracking-heading"><div><p class="eyebrow">Votre espace de vigilance</p><h1 id="tracking-title">Mes textes suivis</h1><p>Vos arrêtés et projets en cours. Les points d’attention, au même endroit.</p></div><button class="primary-button" id="add-tracked-text"><span data-icon="plus"></span>Ajouter un texte</button></div>
+      <div id="tracking-overview" class="tracking-overview"></div>
+      <div class="tracking-toolbar"><label class="tracking-search"><span data-icon="search"></span><input id="tracking-search" type="search" placeholder="Rechercher un texte, une référence…" aria-label="Rechercher dans les textes suivis"></label><label class="sr-only" for="tracking-filter">Filtrer les textes suivis</label><select id="tracking-filter" class="input"><option value="all">Tous les textes</option><option value="new">Nouvelles alertes</option><option value="attention">Alertes à traiter</option><option value="quiet">Sans alerte à traiter</option></select></div>
+      <div id="tracking-list" aria-live="polite"></div><p class="tracking-note">Veille simulée · dernière vérification illustrative le 22 octobre 2026. Les traitements et ajouts restent dans cette session.</p>
+    </section>
   </main>
-
-  <script src="/static/app.js"></script>
+  <footer class="footer"><span>Démonstration : données fictives.</span><span>Un diagnostic à faire valider par un juriste.</span></footer>
+  <dialog class="options-drawer" id="options-drawer" aria-labelledby="options-title"><header><h2 id="options-title">Options de cadrage</h2><button class="icon-button" data-close-dialog aria-label="Fermer les options"><span data-icon="x"></span></button></header><div id="mobile-options-content"></div><footer><button class="primary-button" id="apply-mobile-options">Appliquer <span id="mobile-options-count">0</span></button></footer></dialog>
+  <div class="filter-popover" id="filter-popover" popover aria-label="Choisir les critères de cadrage"></div>
+  <dialog class="drawer" id="detail-drawer" aria-labelledby="detail-title"><div id="detail-content"></div></dialog>
+  <dialog class="help-dialog" id="help-dialog" aria-labelledby="help-title"><div class="dialog-top"><span class="eyebrow">Guide de démonstration</span><button class="icon-button" data-close-dialog aria-label="Fermer"><span data-icon="x"></span></button></div><h2 id="help-title">La clarté du droit.</h2><p>Choisissez un exemple : la demande se compose, les critères s’appliquent et les agents démarrent. Ouvrez ensuite un conflit pour comparer les dispositions et proposer une correction.</p><label for="demo-state">État au prochain lancement</label><select class="input" id="demo-state"><option value="normal">Analyse normale</option><option value="empty">Aucune incohérence</option><option value="error">Erreur simulée</option></select><button type="button" class="secondary-button" id="replay-logo">Rejouer l’animation du logo</button><p class="notice">Les agents et le corpus sont simulés. Tous les scénarios, références et extraits sont fictifs. Aucun texte n’est envoyé à une API.</p></dialog>
+  <dialog class="help-dialog" id="add-text-dialog" aria-labelledby="add-text-title"><form id="add-text-form"><div class="dialog-top"><span class="eyebrow">Suivre un projet</span><button type="button" class="icon-button" data-close-dialog aria-label="Fermer"><span data-icon="x"></span></button></div><h2 id="add-text-title">Ajouter un texte</h2><label for="tracked-title">Intitulé du texte</label><input id="tracked-title" class="input" name="title" required maxlength="160" placeholder="Ex. Conservation des dossiers médicaux"><div class="add-text-grid"><div><label for="tracked-norm">Niveau de norme</label><select id="tracked-norm" class="input" name="norm"><option value="order">Projet d’arrêté</option><option value="decree">Projet de décret</option><option value="law">Projet de loi</option><option value="local">Délibération locale</option></select></div><div><label for="tracked-domain">Domaine</label><select id="tracked-domain" class="input" name="domain"><option value="health">Santé publique</option><option value="work">Droit du travail</option><option value="urban">Urbanisme</option></select></div></div><label for="tracked-reference">Référence (facultative)</label><input id="tracked-reference" class="input" name="reference" maxlength="120" placeholder="Ex. Projet d’arrêté SANP2600142A"><label for="tracked-query">Texte ou question à vérifier</label><textarea id="tracked-query" class="input" name="query" required minlength="10" rows="4" placeholder="Collez une disposition ou décrivez ce que vous souhaitez vérifier…"></textarea><p class="notice">Démonstration locale : la comparaison utilise les scénarios fictifs disponibles. Aucun service de veille n’est déclenché.</p><div class="add-text-actions"><button type="button" class="secondary-button" data-close-dialog>Annuler</button><button type="submit" class="primary-button">Ajouter et analyser</button></div></form></dialog>
+  <div class="toast" id="toast" role="status" hidden></div>
 </body>
 </html>
