@@ -166,9 +166,12 @@ export function makeResearchTools(actor: string, state: { candidates: Map<string
     betaZodTool({
       name: "web_search",
       description:
-        "Recherche web (Keenable) — complément au corpus pour la jurisprudence, la doctrine, les circulaires, ou vérifier l'état d'un texte absent de la base DILA. Jamais pour inventer : cite l'URL renvoyée.",
-      inputSchema: z.object({ query: z.string() }),
-      run: async ({ query }) => {
+        "Recherche web (Keenable) — complément au corpus pour la jurisprudence, la doctrine, les circulaires, ou vérifier l'état d'un texte absent de la base DILA. Option `site` pour se restreindre à une source officielle (ex. « legifrance.gouv.fr », « conseil-etat.fr », « senat.fr »). Jamais pour inventer : cite l'URL renvoyée.",
+      inputSchema: z.object({
+        query: z.string(),
+        site: z.string().optional().describe("Restreint à un domaine, ex. « legifrance.gouv.fr »"),
+      }),
+      run: async ({ query, site }) => {
         const key = process.env.KEENABLE_API_KEY;
         if (!key) return "Recherche web indisponible (KEENABLE_API_KEY non configurée).";
         const t0 = Date.now();
@@ -176,22 +179,20 @@ export function makeResearchTools(actor: string, state: { candidates: Map<string
           const res = await fetch("https://api.keenable.ai/v1/search", {
             method: "POST",
             headers: { "content-type": "application/json", "x-api-key": key },
-            body: JSON.stringify({ query }),
+            // site: undefined est omis par JSON.stringify ; on tronque côté serveur pour épargner des tokens.
+            body: JSON.stringify({ query, site, max_results: 6, snippet_max_length: 600 }),
             signal: AbortSignal.timeout(20_000),
           });
           if (!res.ok) return `Recherche web : erreur ${res.status}.`;
-          const data = (await res.json()) as Record<string, unknown>;
-          const arr = (Array.isArray(data)
-            ? data
-            : (data.results ?? data.data ?? data.hits ?? [])) as Array<Record<string, unknown>>;
-          await tracedQuery(actor, "recherche web (Keenable)", `« ${query} » (${Date.now() - t0} ms)`, "select 1");
-          const rows = arr.slice(0, 6).map((r) => {
-            const title = String(r.title ?? r.name ?? r.url ?? "");
-            const url = String(r.url ?? r.link ?? "");
-            const snippet = String(r.snippet ?? r.content ?? r.description ?? r.text ?? "")
-              .replace(/\s+/g, " ")
-              .slice(0, 280);
-            return `${title}\n   ${url}\n   ${snippet}`;
+          const data = (await res.json()) as {
+            results?: Array<{ title?: string; url?: string; description?: string; snippet?: string; published_at?: string }>;
+          };
+          const arr = data.results ?? [];
+          await tracedQuery(actor, "recherche web (Keenable)", `« ${query} »${site ? ` site:${site}` : ""} (${Date.now() - t0} ms)`, "select 1");
+          const rows = arr.map((r) => {
+            const date = r.published_at ? ` (${r.published_at.slice(0, 10)})` : "";
+            const body = (r.snippet || r.description || "").replace(/\s+/g, " ");
+            return `${r.title ?? r.url ?? ""}${date}\n   ${r.url ?? ""}\n   ${body}`;
           });
           return rows.length ? rows.join("\n") : "Aucun résultat web.";
         } catch (e) {
