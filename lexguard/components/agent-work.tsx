@@ -5,7 +5,8 @@
 // qui court tant qu'il cherche (inspiré du SubAgentStack de Zzz-web).
 import { AnimatePresence, motion } from "motion/react";
 import { useId } from "react";
-import { AGENT_STYLE } from "@/components/agent-style";
+import { useI18n } from "@/components/lang-provider";
+import { AGENT_STYLE, agentLabel } from "@/components/agent-style";
 import { SOURCES, sourcesOf, type SourceId } from "@/components/agent-sources";
 import { BrickMascot } from "@/components/brick-mascot";
 import { LoadingGlobe } from "@/components/loading-globe";
@@ -42,11 +43,12 @@ export function FolderIcon({ open = false, size = 28 }: { open?: boolean; size?:
 }
 
 function SourceFolders({ events }: { events: AgentEvent[] }) {
+  const { t } = useI18n();
   const counts = new Map<SourceId, number>();
   for (const e of events) for (const s of sourcesOf(e.message)) counts.set(s, (counts.get(s) ?? 0) + 1);
   const lastSources = events.length ? sourcesOf(events[events.length - 1].message) : [];
   return (
-    <ul className="flex flex-wrap justify-center gap-2" aria-label="Sources consultées">
+    <ul className="flex flex-wrap justify-center gap-2" aria-label={t("docs.sources.aria")}>
       {SOURCES.filter((s) => s.id !== "outremer" || counts.has("outremer")).map((s) => {
         const n = counts.get(s.id) ?? 0;
         const live = lastSources.includes(s.id);
@@ -59,7 +61,7 @@ function SourceFolders({ events }: { events: AgentEvent[] }) {
             className={`flex items-center gap-2 rounded-full border bg-white py-1 pr-3 pl-1.5 text-[12.5px] ${live ? "border-red/40 text-ink" : "border-line text-body"}`}
           >
             <FolderIcon open={n > 0} size={22} />
-            {s.label}
+            {t(s.labelKey)}
             {n > 0 && (
               <motion.span key={n} initial={{ scale: 1.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="fl-mono text-[11px] text-red">
                 {n}
@@ -73,6 +75,7 @@ function SourceFolders({ events }: { events: AgentEvent[] }) {
 }
 
 function AgentRows({ events }: { events: AgentEvent[] }) {
+  const { t } = useI18n();
   // Une ligne par agent (ordre d'arrivée), avec son dernier message.
   const latest = new Map<AgentEvent["agent"], AgentEvent>();
   for (const e of events) if (e.type !== "fin") latest.set(e.agent, e);
@@ -82,7 +85,7 @@ function AgentRows({ events }: { events: AgentEvent[] }) {
     return (
       <div className="flex items-center justify-center gap-2.5 text-[14px] text-body">
         <BrickMascot size={20} />
-        Les agents se mettent au travail…
+        {t("docs.agents.starting")}
       </div>
     );
   }
@@ -104,7 +107,7 @@ function AgentRows({ events }: { events: AgentEvent[] }) {
             >
               <BrickMascot size={18} idle={done} />
               <span className="min-w-0 flex-1 truncate">
-                <span className="font-medium text-red">{style.label}</span>
+                <span className="font-medium text-red">{agentLabel(t, e.agent in AGENT_STYLE ? e.agent : "orchestrateur")}</span>
                 <span className="text-muted"> · </span>
                 <motion.span
                   key={e.id}

@@ -5,10 +5,11 @@
 import { AnimatePresence, motion } from "motion/react";
 import { createContext, Suspense, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { AGENT_STYLE, SEVERITY_LABEL, VERDICT_STYLE } from "@/components/agent-style";
-import { type Document, DocumentDrop, MODE_LABEL } from "@/components/document-drop";
+import { AGENT_STYLE, agentLabel, severityLabel, VERDICT_STYLE, verdictLabel } from "@/components/agent-style";
+import { type Document, DocumentDrop, modeLabel } from "@/components/document-drop";
 import { AgentWork, FolderIcon } from "@/components/agent-work";
 import { BrickMascot } from "@/components/brick-mascot";
+import { useI18n } from "@/components/lang-provider";
 import { ArticleViewer, type ViewerTarget } from "@/components/article-viewer";
 import { MODEL_CHOICES, type AgentEvent, type Analysis, type Finding, type Mode, type ModelId, type Verdict } from "@/lib/types";
 
@@ -72,6 +73,7 @@ export default function AnalysePage() {
 }
 
 function ChatView() {
+  const { t } = useI18n();
   const initialId = useSearchParams().get("id");
   const [doc, setDoc] = useState<Document | null>(null);
   const [model, setModel] = useState<ModelId>("gpt-6-luna");
@@ -101,17 +103,17 @@ function ChatView() {
   const loadResult = useCallback(async (id: string) => {
     try {
       const res = await fetch(`/api/analyses/${id}`);
-      if (!res.ok) throw new Error(`réponse ${res.status}`);
+      if (!res.ok) throw new Error(t("analyse.err.response", { status: res.status }));
       const data = (await res.json()) as { analysis: Analysis; findings: Finding[] };
       setAnalysis(data.analysis);
       setFindings(data.findings);
       if (data.analysis.status !== "en_cours") setPhase("termine");
       return data.analysis;
     } catch (e) {
-      setError(`Impossible de charger la conversation (${e instanceof Error ? e.message : "erreur réseau"}).`);
+      setError(t("analyse.err.load", { detail: e instanceof Error ? e.message : t("analyse.err.network") }));
       return null;
     }
-  }, []);
+  }, [t]);
 
   const follow = useCallback(
     (id: string) => {
@@ -209,11 +211,11 @@ function ChatView() {
         });
         if (res.status === 503) {
           const body = (await res.json().catch(() => null)) as { error?: string } | null;
-          throw new Error(body?.error ?? "Aucune clé de modèle côté serveur : ajoutez OPENROUTER_API_KEY (ou ANTHROPIC_API_KEY) dans lexguard/.env puis relancez le serveur.");
+          throw new Error(body?.error ?? t("analyse.err.noKey"));
         }
         if (!res.ok) {
           const body = (await res.json().catch(() => null)) as { error?: string } | null;
-          throw new Error(`${d.name} : ${body?.error ?? `réponse ${res.status}`}`);
+          throw new Error(t("analyse.err.doc", { name: d.name, detail: body?.error ?? t("analyse.err.response", { status: res.status }) }));
         }
         ids.push(((await res.json()) as { id: string }).id);
         if (ids.length === 1) {
@@ -223,10 +225,10 @@ function ChatView() {
           follow(ids[0]);
         }
       }
-      if (docs.length > MAX_PAR_DEPOT) setError(`${docs.length} documents déposés : seuls les ${MAX_PAR_DEPOT} premiers sont analysés.`);
+      if (docs.length > MAX_PAR_DEPOT) setError(t("analyse.err.tooMany", { count: docs.length, max: MAX_PAR_DEPOT }));
     } catch (e) {
       setPhase((p) => (p === "lancement" ? "vide" : p));
-      setError(e instanceof Error ? e.message : "Les agents n'ont pas pu démarrer.");
+      setError(e instanceof Error ? e.message : t("analyse.err.start"));
     }
     void loadConversations();
   }
@@ -235,7 +237,7 @@ function ChatView() {
   const empty = phase === "vide";
 
   const drop = (compact: boolean) => (
-    <DocumentDrop onDocuments={analyse} onExample={() => analyse([{ name: "Exemple — arrêté municipal n° 2026-045", text: EXAMPLE }])} disabled={busy} model={model} onModel={setModel} compact={compact} />
+    <DocumentDrop onDocuments={analyse} onExample={() => analyse([{ name: t("analyse.exampleName"), text: EXAMPLE }])} disabled={busy} model={model} onModel={setModel} compact={compact} />
   );
 
   return (
@@ -251,12 +253,12 @@ function ChatView() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex items-center gap-2 px-4 pt-4 lg:hidden">
-          <button type="button" onClick={() => setDrawer(true)} className="fl-btn fl-btn--ghost fl-btn--sm" aria-label="Ouvrir les conversations">
-            Conversations
+          <button type="button" onClick={() => setDrawer(true)} className="fl-btn fl-btn--ghost fl-btn--sm" aria-label={t("analyse.openConversations")}>
+            {t("analyse.conversations")}
           </button>
           {!empty && (
             <button type="button" onClick={newConversation} className="fl-btn fl-btn--ghost fl-btn--sm">
-              Nouvelle
+              {t("analyse.new")}
             </button>
           )}
         </div>
@@ -264,10 +266,10 @@ function ChatView() {
         {empty ? (
           <div className="flex flex-1 flex-col items-center justify-center px-4 pb-24">
             <motion.h1 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="text-center text-[clamp(30px,4.4vw,48px)] font-medium tracking-[-0.035em]">
-              Quel acte voulez-vous vérifier aujourd’hui ?
+              {t("analyse.title")}
             </motion.h1>
             <p className="mt-3 max-w-[52ch] text-center text-[15px] text-body">
-              Déposez-le : il est contrôlé aussitôt contre tout le droit en vigueur.
+              {t("analyse.subtitle")}
             </p>
             <div className="mt-10 w-full max-w-[760px]">{drop(false)}</div>
             {error && <div className="mt-6 max-w-[760px] rounded-[12px] border border-red/30 bg-red/5 px-4 py-3 text-[14px] text-red-deep">{error}</div>}
@@ -277,7 +279,7 @@ function ChatView() {
             <div className="mx-auto w-full max-w-[760px] flex-1 px-4 pt-8 pb-10">
               {doc && <DocumentBubble doc={doc} />}
 
-              {phase === "lancement" && <AssistantTyping label="Je lance les agents…" />}
+              {phase === "lancement" && <AssistantTyping label={t("analyse.launching")} />}
 
               {(phase === "analyse" || phase === "termine") && (
                 <>
@@ -346,16 +348,17 @@ function AssistantTyping({ label }: { label: string }) {
 }
 
 function CadrageSummary({ answers, mode, model }: { answers: Record<string, string>; mode: Mode; model: ModelId }) {
+  const { t } = useI18n();
   const values = Object.values(answers).filter(Boolean);
   return (
     <div className="mt-6 flex gap-3">
       <AssistantAvatar />
       <div className="flex min-w-0 flex-wrap items-center gap-1.5 pt-1">
-        <span className="fl-badge bg-red/10 text-red-deep">{MODE_LABEL[mode] ?? mode}</span>
+        <span className="fl-badge bg-red/10 text-red-deep">{modeLabel(t, mode)}</span>
         <span className="fl-badge bg-card text-body">{MODEL_CHOICES.find((c) => c.id === model)?.label ?? model}</span>
         {values.map((v) => (
           <span key={v} className="fl-badge bg-card text-body">
-            {v}
+            {v === CADRAGE.periode ? t("analyse.cadrage.period") : v === CADRAGE.perimetre ? t("analyse.cadrage.scope") : v}
           </span>
         ))}
       </div>
@@ -364,6 +367,7 @@ function CadrageSummary({ answers, mode, model }: { answers: Record<string, stri
 }
 
 function WorkBlock({ events, running }: { events: AgentEvent[]; running: boolean }) {
+  const { t, lang } = useI18n();
   return (
     <div className="mt-6 flex gap-3">
       <AssistantAvatar />
@@ -381,19 +385,18 @@ function WorkBlock({ events, running }: { events: AgentEvent[]; running: boolean
           title={
             <>
               <FolderIcon open={running} size={18} />
-              {running ? "Travail des agents en direct" : "Travail des agents"} · {events.length} étape{events.length > 1 ? "s" : ""}
+              {running ? t("analyse.work.live") : t("analyse.work.title")} · {t(events.length > 1 ? "analyse.work.steps" : "analyse.work.step", { n: events.length })}
             </>
           }
         >
           <ol className="mt-3 flex max-h-[360px] flex-col gap-2.5 overflow-y-auto pr-1">
             {events.map((event) => {
-              const style = AGENT_STYLE[event.agent] ?? AGENT_STYLE.orchestrateur;
               return (
                 <li key={event.id} className="flex gap-2.5">
                   <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-red/70" />
                   <div className="min-w-0">
-                    <span className="text-[12px] font-medium">{style.label}</span>
-                    <span className="fl-mono ml-2 text-[11px] text-muted">{new Date(event.ts).toLocaleTimeString("fr-FR")}</span>
+                    <span className="text-[12px] font-medium">{agentLabel(t, event.agent in AGENT_STYLE ? event.agent : "orchestrateur")}</span>
+                    <span className="fl-mono ml-2 text-[11px] text-muted">{new Date(event.ts).toLocaleTimeString(lang === "en" ? "en-GB" : "fr-FR")}</span>
                     <p className={`text-[13px] leading-snug break-words ${event.type === "outil" ? "fl-mono text-[12px] text-muted" : event.type === "rejet" || event.type === "erreur" ? "text-red-deep" : "text-body"}`}>
                       {event.message}
                     </p>
@@ -439,9 +442,10 @@ function Disclosure({ title, className = "", children }: { title: React.ReactNod
 const ORDER: Verdict[] = ["conflit", "incompetence", "forme", "vide", "doublon", "existant", "conforme"];
 
 function Results({ analysis, findings }: { analysis: Analysis | null; findings: Finding[] }) {
+  const { t } = useI18n();
   if (!analysis) return null;
   if (analysis.status === "erreur") {
-    return <div className="mt-6 ml-11 rounded-[14px] border border-red/30 bg-red/5 p-5 text-[14px] text-red-deep">L’analyse a échoué. Le détail est dans le travail des agents ci-dessus.</div>;
+    return <div className="mt-6 ml-11 rounded-[14px] border border-red/30 bg-red/5 p-5 text-[14px] text-red-deep">{t("analyse.failed")}</div>;
   }
   const exploration = analysis.mode === "exploration";
   const sorted = [...findings].sort((a, b) => ORDER.indexOf(a.verdict) - ORDER.indexOf(b.verdict));
@@ -465,21 +469,21 @@ function Results({ analysis, findings }: { analysis: Analysis | null; findings: 
                   transition={{ delay: 0.15 + i * 0.07, type: "spring", stiffness: 400, damping: 18 }}
                   className={`fl-badge ${VERDICT_STYLE[v].className}`}
                 >
-                  {summary.counts[v]} {VERDICT_STYLE[v].label.toLowerCase()}
+                  {summary.counts[v]} {verdictLabel(t, v).toLowerCase()}
                 </motion.span>
               ))}
-              {summary.rejected > 0 && <span className="fl-badge bg-card text-body">{summary.rejected} écartée(s) par le contradicteur</span>}
-              <span className="fl-badge bg-card text-body">{summary.articles_consulted ?? "—"} articles consultés</span>
+              {summary.rejected > 0 && <span className="fl-badge bg-card text-body">{t("analyse.rejectedByChallenger", { n: summary.rejected })}</span>}
+              <span className="fl-badge bg-card text-body">{t("analyse.articlesConsulted", { n: summary.articles_consulted ?? "—" })}</span>
               {analysis.latency_ms != null && <span className="fl-badge bg-card text-body">{Math.round(analysis.latency_ms / 1000)} s</span>}
               {analysis.cost_usd != null && <span className="fl-badge bg-card text-body">{Number(analysis.cost_usd).toFixed(2)} $</span>}
             </div>
           </div>
         )}
 
-        {exploration && main.length > 0 && <p className="mt-6 fl-eyebrow">Ce qui existe déjà</p>}
+        {exploration && main.length > 0 && <p className="mt-6 fl-eyebrow">{t("analyse.alreadyExists")}</p>}
         {main.length === 0 && (
           <div className="mt-5 rounded-[14px] bg-warm p-5 text-[14px] text-body">
-            {exploration ? "Aucun texte pertinent trouvé dans le corpus consulté." : "Aucune alerte retenue : le texte paraît conforme au droit en vigueur consulté."}
+            {exploration ? t("analyse.none.exploration") : t("analyse.none.control")}
           </div>
         )}
         <div className="mt-4 flex flex-col gap-4">
@@ -489,7 +493,7 @@ function Results({ analysis, findings }: { analysis: Analysis | null; findings: 
         </div>
 
         {others.length > 0 && (
-          <Disclosure className="mt-4 p-4" title={`${others.length} élément(s) conforme(s) ou écarté(s)`}>
+          <Disclosure className="mt-4 p-4" title={t("analyse.others", { n: others.length })}>
             <div className="mt-3 flex flex-col gap-3">
               {others.map((f) => (
                 <FindingCard key={f.id} finding={f} compact />
@@ -503,6 +507,7 @@ function Results({ analysis, findings }: { analysis: Analysis | null; findings: 
 }
 
 function FindingCard({ finding, compact = false, index = 0 }: { finding: Finding; compact?: boolean; index?: number }) {
+  const { t } = useI18n();
   const openSource = useContext(OpenSource);
   const [feedback, setFeedback] = useState<"valide" | "rejete" | null>(null);
   const [asking, setAsking] = useState(false);
@@ -551,17 +556,17 @@ function FindingCard({ finding, compact = false, index = 0 }: { finding: Finding
         />
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <span className={`fl-badge ${verdict.className}`}>{verdict.label}</span>
-        {!informative && <span className="fl-badge bg-card text-body">{SEVERITY_LABEL[finding.severity]}</span>}
-        {finding.verified && !finding.rejection_reason && <span className="fl-badge bg-red/10 text-red-deep">Citations vérifiées</span>}
-        {finding.rejection_reason && <span className="fl-badge bg-card text-muted">Écartée</span>}
+        <span className={`fl-badge ${verdict.className}`}>{verdictLabel(t, VERDICT_STYLE[finding.verdict] ? finding.verdict : "conforme")}</span>
+        {!informative && <span className="fl-badge bg-card text-body">{severityLabel(t, finding.severity)}</span>}
+        {finding.verified && !finding.rejection_reason && <span className="fl-badge bg-red/10 text-red-deep">{t("analyse.citationsVerified")}</span>}
+        {finding.rejection_reason && <span className="fl-badge bg-card text-muted">{t("analyse.dismissed")}</span>}
       </div>
       <h3 className={`mt-3 leading-snug tracking-[-0.02em] ${compact ? "text-[15px]" : "text-[18px]"} ${feedback === "rejete" ? "line-through decoration-red/50" : ""}`}>{finding.title}</h3>
       {finding.disposition?.text && finding.verdict !== "existant" && (
         <blockquote className="mt-2 border-l-2 border-line-2 pl-3 text-[13px] italic text-muted">{finding.disposition.text}</blockquote>
       )}
       <p className="mt-3 text-[14px] leading-relaxed text-body">{finding.explanation}</p>
-      {finding.rejection_reason && <p className="mt-3 rounded-[10px] bg-card px-3 py-2 text-[13px] text-body">Motif du rejet : {finding.rejection_reason}</p>}
+      {finding.rejection_reason && <p className="mt-3 rounded-[10px] bg-card px-3 py-2 text-[13px] text-body">{t("analyse.rejectionReason", { reason: finding.rejection_reason })}</p>}
 
       {finding.citations.length > 0 && (
         <div className="mt-4 flex flex-col gap-2">
@@ -579,9 +584,9 @@ function FindingCard({ finding, compact = false, index = 0 }: { finding: Finding
               <div className="flex items-center justify-between gap-3">
                 <span className="flex items-center gap-2 text-[13px] font-medium">
                   <FolderIcon size={16} />
-                  Art. {c.num.replace(/^art\.?\s*/i, "")} · <span className="text-body">{c.code}</span>
+                  {t("analyse.art", { num: c.num.replace(/^art\.?\s*/i, "") })} · <span className="text-body">{c.code}</span>
                 </span>
-                <span className="fl-mono shrink-0 text-[11px] text-muted group-hover:text-red">Voir la source →</span>
+                <span className="fl-mono shrink-0 text-[11px] text-muted group-hover:text-red">{t("analyse.viewSource")}</span>
               </div>
               <p className="mt-1 text-[13px] leading-relaxed text-body">« {c.quote} »</p>
             </motion.button>
@@ -589,7 +594,7 @@ function FindingCard({ finding, compact = false, index = 0 }: { finding: Finding
         </div>
       )}
 
-      {finding.suggestion && !compact && <Suggestion text={finding.suggestion} label={informative ? "À retenir" : "Rédaction proposée"} delay={0.55 + index * 0.09} />}
+      {finding.suggestion && !compact && <Suggestion text={finding.suggestion} label={informative ? t("analyse.keep") : t("analyse.proposed")} delay={0.55 + index * 0.09} />}
 
       {!compact && (
         <div className="mt-4 border-t border-line pt-3">
@@ -597,7 +602,7 @@ function FindingCard({ finding, compact = false, index = 0 }: { finding: Finding
             {feedback ? (
               <motion.div key="merci" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-2.5 text-[13px] text-body">
                 {feedback === "valide" ? <FiledFolder /> : <BrickMascot size={18} idle />}
-                {feedback === "valide" ? "Rangé dans la doctrine interne." : "Faux positif enregistré : les agents en tiendront compte."}
+                {feedback === "valide" ? t("analyse.fb.filed") : t("analyse.fb.recorded")}
               </motion.div>
             ) : asking ? (
               <motion.form
@@ -615,21 +620,21 @@ function FindingCard({ finding, compact = false, index = 0 }: { finding: Finding
                   autoFocus
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  placeholder="Pourquoi est-ce un faux positif ? (facultatif)"
+                  placeholder={t("analyse.fb.placeholder")}
                   className="h-9 min-w-[220px] flex-1 rounded-full border border-line-2 px-4 text-[13px] outline-none focus:border-red/40"
                 />
                 <button type="submit" disabled={sending} className="fl-btn fl-btn--red fl-btn--sm">
-                  {sending ? "Envoi…" : "Envoyer"}
+                  {sending ? t("analyse.fb.sending") : t("analyse.fb.send")}
                 </button>
                 <button type="button" onClick={() => setAsking(false)} className="text-[13px] text-muted hover:text-ink">
-                  Annuler
+                  {t("analyse.fb.cancel")}
                 </button>
               </motion.form>
             ) : (
               <motion.div key="choix" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, y: -4 }} className="flex flex-wrap items-center gap-2">
-                <span className="mr-1 text-[13px] text-muted">{informative ? "Utile ?" : "Cette alerte est-elle juste ?"}</span>
+                <span className="mr-1 text-[13px] text-muted">{informative ? t("analyse.fb.useful") : t("analyse.fb.isRight")}</span>
                 <motion.button whileTap={{ scale: 0.92 }} type="button" disabled={sending} onClick={() => send("valide")} className="fl-btn fl-btn--ghost fl-btn--sm hover:border-red/40 hover:text-red-deep">
-                  ✓ Pertinent
+                  {t("analyse.fb.relevant")}
                 </motion.button>
                 <motion.button
                   whileTap={{ scale: 0.92 }}
@@ -638,12 +643,12 @@ function FindingCard({ finding, compact = false, index = 0 }: { finding: Finding
                   onClick={() => setAsking(true)}
                   className="fl-btn fl-btn--ghost fl-btn--sm hover:border-red/40 hover:text-red-deep"
                 >
-                  ✗ Faux positif
+                  {t("analyse.fb.falsePositive")}
                 </motion.button>
               </motion.div>
             )}
           </AnimatePresence>
-          {feedbackError && <p className="mt-2 text-[13px] text-red-deep">Envoi impossible, réessayez.</p>}
+          {feedbackError && <p className="mt-2 text-[13px] text-red-deep">{t("analyse.fb.failed")}</p>}
         </div>
       )}
     </motion.article>
@@ -694,8 +699,8 @@ function FiledFolder() {
 
 // ---------- Conversations ----------
 
-const rtf = new Intl.RelativeTimeFormat("fr", { numeric: "auto" });
-function relative(iso: string) {
+function relative(iso: string, lang: string) {
+  const rtf = new Intl.RelativeTimeFormat(lang === "en" ? "en-GB" : "fr", { numeric: "auto" });
   const minutes = Math.round((new Date(iso).getTime() - Date.now()) / 60_000);
   if (Math.abs(minutes) < 60) return rtf.format(minutes, "minute");
   const hours = Math.round(minutes / 60);
@@ -712,23 +717,24 @@ function ConversationList(props: {
   onOpen: (id: string) => void;
 }) {
   const { items, activeId, open, onClose, onNew, onOpen } = props;
+  const { t, lang } = useI18n();
   const list = (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between px-3 pt-4 pb-2">
-        <span className="fl-eyebrow">Conversations</span>
-        <button type="button" onClick={onClose} className="text-[13px] text-muted hover:text-ink lg:hidden" aria-label="Fermer">
-          Fermer
+        <span className="fl-eyebrow">{t("analyse.conversations")}</span>
+        <button type="button" onClick={onClose} className="text-[13px] text-muted hover:text-ink lg:hidden" aria-label={t("analyse.close")}>
+          {t("analyse.close")}
         </button>
       </div>
       <button type="button" onClick={onNew} className="mx-2 mb-2 flex items-center gap-2 rounded-[10px] px-3 py-2.5 text-[14px] font-medium text-ink transition-colors hover:bg-card">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         </svg>
-        Nouvelle conversation
+        {t("analyse.newConversation")}
       </button>
-      <nav className="flex-1 overflow-y-auto px-2 pb-6" aria-label="Conversations passées">
-        {items === null && <p className="px-3 py-2 text-[13px] text-muted">Chargement…</p>}
-        {items?.length === 0 && <p className="px-3 py-2 text-[13px] text-muted">Aucune conversation pour l’instant.</p>}
+      <nav className="flex-1 overflow-y-auto px-2 pb-6" aria-label={t("analyse.pastConversations")}>
+        {items === null && <p className="px-3 py-2 text-[13px] text-muted">{t("analyse.loading")}</p>}
+        {items?.length === 0 && <p className="px-3 py-2 text-[13px] text-muted">{t("analyse.noConversations")}</p>}
         {items?.map((c) => (
           <button
             key={c.id}
@@ -739,7 +745,7 @@ function ConversationList(props: {
             <span className="line-clamp-2 text-[13.5px] leading-snug text-ink">{c.title}</span>
             <span className="mt-1 flex items-center gap-1.5 text-[11.5px] text-muted">
               <span className={`size-1.5 rounded-full ${c.status === "termine" ? "bg-ok" : c.status === "erreur" ? "bg-red" : "bg-orange fl-pulse"}`} />
-              {c.mode ? MODE_LABEL[c.mode] : "Contrôle"} · {relative(c.created_at)}
+              {c.mode ? modeLabel(t, c.mode) : t("analyse.mode.default")} · {relative(c.created_at, lang)}
             </span>
           </button>
         ))}

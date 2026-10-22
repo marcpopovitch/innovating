@@ -4,6 +4,7 @@
 // ses versions datées et ce qui a changé d'une version à l'autre (différence mot à mot).
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useI18n } from "@/components/lang-provider";
 
 interface Version {
   id: string;
@@ -34,38 +35,16 @@ export interface ViewerTarget {
   quote?: string;
 }
 
-const ETAT: Record<string, string> = {
-  VIGUEUR: "En vigueur",
-  MODIFIE: "Modifiée",
-  ABROGE: "Abrogée",
-  TRANSFERE: "Transférée",
-  PERIME: "Périmée",
-};
-const NIVEAU: Record<string, string> = {
-  constitutionnel: "Bloc de constitutionnalité",
-  code: "Code",
-  international: "International / UE",
-  jurisprudence: "Jurisprudence",
-};
-const LINK_LABEL: Record<string, string> = {
-  CREATION: "Créé par",
-  MODIFICATION: "Modifié par",
-  CODIFICATION: "Codifié par",
-  CITATION: "Cite",
-  ABROGATION: "Abrogé par",
-  CONCORDANCE: "Ancien article",
-  CONCORDE: "Ancien article",
-  TRANSFERT: "Transféré",
-};
+type TFn = ReturnType<typeof useI18n>["t"];
 
-const fmtDate = (d: string | null) =>
+const fmtDate = (d: string | null, lang: string, t: TFn) =>
   d && !d.startsWith("2999")
-    ? new Date(d).toLocaleDateString("fr-FR", {
+    ? new Date(d).toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR", {
         day: "numeric",
         month: "short",
         year: "numeric",
       })
-    : "aujourd'hui";
+    : t("app.viewer.today");
 
 /** Expression qui retrouve l'extrait malgré les espaces, retours à la ligne et apostrophes typographiques. */
 function quoteRegex(quote: string) {
@@ -149,6 +128,13 @@ function Panel({
   target: ViewerTarget;
   onClose: () => void;
 }) {
+  const { t, lang } = useI18n();
+  const fmt = (d: string | null) => fmtDate(d, lang, t);
+  const etatLabel = (e: string) => {
+    const k = `app.viewer.etat.${e}`;
+    const v = t(k);
+    return v === k ? e : v;
+  };
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [error, setError] = useState(false);
   const [tab, setTab] = useState<Tab>("texte");
@@ -225,20 +211,20 @@ function Panel({
   }, [tab, firstChange, current]);
 
   const tabs: Array<{ id: Tab; label: string; hidden?: boolean }> = [
-    { id: "texte", label: "Texte" },
+    { id: "texte", label: t("app.viewer.tab.texte") },
     {
       id: "historique",
-      label: `Historique${versions.length > 1 ? ` · ${versions.length}` : ""}`,
+      label: `${t("app.viewer.tab.historique")}${versions.length > 1 ? ` · ${versions.length}` : ""}`,
       hidden: versions.length < 2,
     },
     {
       id: "changements",
-      label: "Ce qui a changé",
+      label: t("app.viewer.tab.changements"),
       hidden: versions.length < 2,
     },
     {
       id: "liens",
-      label: `Liens${sheet?.links.length ? ` · ${sheet.links.length}` : ""}`,
+      label: `${t("app.viewer.tab.liens")}${sheet?.links.length ? ` · ${sheet.links.length}` : ""}`,
       hidden: !sheet?.links.length,
     },
   ];
@@ -256,7 +242,7 @@ function Panel({
       <motion.aside
         key="panneau"
         role="dialog"
-        aria-label="Article source"
+        aria-label={t("app.viewer.dialogLabel")}
         className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[640px] flex-col bg-white shadow-[-24px_0_60px_rgba(0,0,0,0.12)]"
         initial={{ x: "100%" }}
         animate={{ x: 0 }}
@@ -267,14 +253,20 @@ function Panel({
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <p className="fl-mono text-[11px] uppercase tracking-[0.06em] text-muted">
-                {sheet ? (NIVEAU[sheet.article.niveau] ?? "Source") : "Source"}
+                {sheet
+                  ? (() => {
+                      const k = `app.viewer.niveau.${sheet.article.niveau}`;
+                      const v = t(k);
+                      return v === k ? t("app.viewer.source") : v;
+                    })()
+                  : t("app.viewer.source")}
               </p>
               <h2 className="mt-1 text-[20px] leading-tight tracking-[-0.02em]">
                 {sheet
                   ? sheet.article.niveau === "jurisprudence"
                     ? sheet.article.num
-                    : `Article ${sheet.article.num ?? ""}`
-                  : "Chargement…"}
+                    : t("app.viewer.article", { num: sheet.article.num ?? "" })
+                  : t("app.viewer.loading")}
               </h2>
               {sheet && (
                 <p className="mt-0.5 truncate text-[13px] text-body">
@@ -285,7 +277,7 @@ function Panel({
             <button
               type="button"
               onClick={onClose}
-              aria-label="Fermer"
+              aria-label={t("app.viewer.close")}
               className="rounded-full p-2 text-muted transition-colors hover:bg-warm hover:text-ink"
             >
               <svg
@@ -313,13 +305,17 @@ function Panel({
               <span
                 className={`fl-badge ${sheet.article.etat === "VIGUEUR" ? "bg-ok/10 text-ok" : "bg-card text-muted"}`}
               >
-                {ETAT[sheet.article.etat] ?? sheet.article.etat} depuis le{" "}
-                {fmtDate(sheet.article.date_debut)}
+                {t("app.viewer.stateSince", {
+                  etat: etatLabel(sheet.article.etat),
+                  date: fmt(sheet.article.date_debut),
+                })}
               </span>
               {versions.length > 1 && (
                 <span className="fl-badge bg-card text-body">
-                  {versions.length} versions depuis{" "}
-                  {new Date(versions[0].date_debut ?? "").getFullYear()}
+                  {t("app.viewer.versionsSince", {
+                    n: versions.length,
+                    year: new Date(versions[0].date_debut ?? "").getFullYear(),
+                  })}
                 </span>
               )}
               <a
@@ -328,7 +324,7 @@ function Panel({
                 rel="noopener noreferrer"
                 className="fl-mono ml-auto text-[12px] text-muted hover:text-red"
               >
-                Version officielle ↗
+                {t("app.viewer.official")}
               </a>
             </motion.div>
           )}
@@ -367,7 +363,7 @@ function Panel({
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {error && (
             <p className="text-[14px] text-red-deep">
-              Impossible de charger cet article.
+              {t("app.viewer.error")}
             </p>
           )}
           {!sheet && !error && (
@@ -400,16 +396,18 @@ function Panel({
                   <>
                     {current.id !== sheet.article.id && (
                       <p className="mb-3 rounded-[10px] bg-card px-3 py-2 text-[12px] text-body">
-                        Version du {fmtDate(current.date_debut)} au{" "}
-                        {fmtDate(current.date_fin)} (
-                        {ETAT[current.etat] ?? current.etat})
+                        {t("app.viewer.versionRange", {
+                          from: fmt(current.date_debut),
+                          to: fmt(current.date_fin),
+                          etat: etatLabel(current.etat),
+                        })}
                       </p>
                     )}
                     {target.quote &&
                       !highlighted.match &&
                       current.id === target.articleId && (
                         <p className="mb-3 rounded-[10px] bg-card px-3 py-2 text-[12px] text-muted">
-                          Extrait cité : « {target.quote} »
+                          {t("app.viewer.citedExcerpt", { quote: target.quote })}
                         </p>
                       )}
                     <p className="whitespace-pre-line text-[15px] leading-[1.75] text-ink">
@@ -462,11 +460,11 @@ function Panel({
                           className={`w-full rounded-[12px] border px-3.5 py-2.5 text-left transition-colors ${v.id === current.id ? "border-ink bg-warm" : "border-line hover:border-line-2"}`}
                         >
                           <span className="flex items-center justify-between gap-2 text-[13px] font-medium">
-                            {fmtDate(v.date_debut)} → {fmtDate(v.date_fin)}
+                            {fmt(v.date_debut)} → {fmt(v.date_fin)}
                             <span
                               className={`fl-badge ${v.etat === "VIGUEUR" ? "bg-ok/10 text-ok" : "bg-card text-muted"}`}
                             >
-                              {ETAT[v.etat] ?? v.etat}
+                              {etatLabel(v.etat)}
                             </span>
                           </span>
                           <span className="mt-1 line-clamp-2 block text-[12px] text-body">
@@ -486,23 +484,23 @@ function Panel({
                           value={current.id}
                           onChange={(e) => setSelected(e.target.value)}
                           className="rounded-full border border-line bg-white px-3 py-1.5 text-[12px]"
-                          aria-label="Version comparée"
+                          aria-label={t("app.viewer.compareLabel")}
                         >
                           {versions.slice(1).map((v) => (
                             <option key={v.id} value={v.id}>
-                              Version du {fmtDate(v.date_debut)}
+                              {t("app.viewer.versionOf", { date: fmt(v.date_debut) })}
                             </option>
                           ))}
                         </select>
                         <span className="text-muted">
-                          comparée à celle du {fmtDate(previous.date_debut)}
+                          {t("app.viewer.comparedTo", { date: fmt(previous.date_debut) })}
                         </span>
                         <span className="ml-auto flex gap-2">
                           <span className="rounded-full bg-ok/10 px-2 py-0.5 text-ok">
-                            + {words("add")} mots ajoutés
+                            {t("app.viewer.wordsAdded", { n: words("add") })}
                           </span>
                           <span className="rounded-full bg-red/10 px-2 py-0.5 text-red-deep">
-                            − {words("del")} retirés
+                            {t("app.viewer.wordsRemoved", { n: words("del") })}
                           </span>
                         </span>
                       </div>
@@ -531,9 +529,7 @@ function Panel({
                     </>
                   ) : (
                     <p className="text-[14px] text-muted">
-                      C&apos;est la première version connue de cet article :
-                      choisissez une version plus récente dans
-                      l&apos;historique.
+                      {t("app.viewer.firstVersion")}
                     </p>
                   ))}
 
@@ -549,12 +545,16 @@ function Panel({
                       >
                         <span className="fl-mono text-[11px] uppercase tracking-[0.04em] text-muted">
                           {l.sens === "cité par"
-                            ? "Cité par"
-                            : (LINK_LABEL[l.type] ?? l.type)}
+                            ? t("app.viewer.link.citedBy")
+                            : (() => {
+                                const k = `app.viewer.link.${l.type}`;
+                                const v = t(k);
+                                return v === k ? l.type : v;
+                              })()}
                         </span>
                         <p className="mt-0.5 text-[13px] text-ink">
                           {l.code_title
-                            ? `${l.code_title} · art. ${l.num}`
+                            ? t("app.viewer.linkArt", { title: l.code_title, num: l.num ?? "" })
                             : (l.num ?? l.id)}
                         </p>
                       </motion.li>

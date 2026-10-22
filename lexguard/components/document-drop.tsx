@@ -5,13 +5,18 @@
 // base. Pas de champ de saisie ni de questions.
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useI18n } from "@/components/lang-provider";
 import { ModelBadge, ModelIcon } from "@/components/model-icons";
+import type { T } from "@/lib/i18n/translate";
 import { MODEL_CHOICES, type Mode, type ModelId } from "@/lib/types";
 
+/** Libellés français, conservés pour les importeurs existants ; préférer `modeLabel(t, mode)`. */
 export const MODE_LABEL: Record<Mode, string> = {
   controle: "Contrôler un texte",
   exploration: "Explorer une idée",
 };
+
+export const modeLabel = (t: T, mode: Mode) => t(`docs.mode.${mode}` as const);
 
 export interface Document {
   name: string;
@@ -46,10 +51,12 @@ function useClickOutside(open: boolean, close: () => void) {
   return ref;
 }
 
-const ACCEPT = ".pdf,.docx,.txt,.md,.xml,.zip,.html,.htm";
+const ACCEPT = ".pdf,.docx,.txt,.md,.xml,.zip,.html,.htm,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.tif,.tiff,.bmp";
 
 export function DocumentDrop(props: Props) {
   const { onDocuments, onExample, disabled, model, onModel, compact } = props;
+  const { t, lang } = useI18n();
+  const locale = lang === "fr" ? "fr-FR" : "en-US";
   const [menu, setMenu] = useState(false);
   const closeMenu = useCallback(() => setMenu(false), []);
   const menuRef = useClickOutside(menu, closeMenu);
@@ -62,27 +69,28 @@ export function DocumentDrop(props: Props) {
   const readFiles = useCallback(
     async (files: File[], label: string) => {
       setNotice(null);
-      if (!files.length) return setNotice({ ok: false, text: `${label} : aucun fichier trouvé` });
+      if (!files.length) return setNotice({ ok: false, text: t("docs.err.noFile", { label }) });
       setImporting(true);
       try {
         const body = new FormData();
         for (const file of files) body.append("file", file);
         const res = await fetch("/api/fichier", { method: "POST", body });
-        const data = await res.json().catch(() => ({ error: "Réponse illisible du serveur" }));
-        if (!res.ok) return setNotice({ ok: false, text: `${label} : ${data.error ?? "fichier illisible"}` });
-        if (data.total)
-          setNotice({
-            ok: true,
-            text: `${data.total.toLocaleString("fr-FR")} décision${data.total > 1 ? "s" : ""} du Conseil d'État reconnue${data.total > 1 ? "s" : ""} — ${data.nouvelles ? `${data.nouvelles.toLocaleString("fr-FR")} ajoutée${data.nouvelles > 1 ? "s" : ""} à la base` : `déjà ${data.total > 1 ? "toutes " : ""}dans la base`}.`,
-          });
+        const data = await res.json().catch(() => ({ error: t("docs.err.unreadable") }));
+        if (!res.ok) return setNotice({ ok: false, text: t("docs.err.generic", { label, error: data.error ?? t("docs.err.file") }) });
+        if (data.total) {
+          const added = data.nouvelles
+            ? t(data.nouvelles > 1 ? "docs.notice.added.many" : "docs.notice.added.one", { n: data.nouvelles.toLocaleString(locale) })
+            : t(data.total > 1 ? "docs.notice.already.many" : "docs.notice.already.one");
+          setNotice({ ok: true, text: t(data.total > 1 ? "docs.notice.many" : "docs.notice.one", { total: data.total.toLocaleString(locale), added }) });
+        }
         if (data.actes?.length) onDocuments(data.actes);
       } catch {
-        setNotice({ ok: false, text: `${label} : envoi impossible` });
+        setNotice({ ok: false, text: t("docs.err.upload", { label }) });
       } finally {
         setImporting(false);
       }
     },
-    [onDocuments],
+    [onDocuments, t, locale],
   );
 
   // Dépôt n'importe où sur la page. Un dossier arrive comme un faux fichier illisible : on le parcourt.
@@ -110,12 +118,12 @@ export function DocumentDrop(props: Props) {
       // Navigateur sans parcours de dossiers : on prend les fichiers tels quels.
       if (!entries.length) {
         const files = [...(e.dataTransfer?.files ?? [])];
-        if (files.length) readFiles(files, files.length > 1 ? `${files.length} fichiers` : files[0].name);
+        if (files.length) readFiles(files, files.length > 1 ? t("docs.files.count", { n: files.length }) : files[0].name);
         return;
       }
       Promise.all(entries.map(entryFiles))
-        .then((lists) => readFiles(lists.flat(), entries.length > 1 ? `${entries.length} éléments` : entries[0].name))
-        .catch(() => setNotice({ ok: false, text: `${entries[0].name} : lecture impossible` }));
+        .then((lists) => readFiles(lists.flat(), entries.length > 1 ? t("docs.items.count", { n: entries.length }) : entries[0].name))
+        .catch(() => setNotice({ ok: false, text: t("docs.err.read", { name: entries[0].name }) }));
     };
     window.addEventListener("dragenter", onEnter);
     window.addEventListener("dragleave", onLeave);
@@ -127,28 +135,28 @@ export function DocumentDrop(props: Props) {
       window.removeEventListener("dragover", onOver);
       window.removeEventListener("drop", onDrop);
     };
-  }, [disabled, readFiles]);
+  }, [disabled, readFiles, t]);
 
   const pick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = [...(e.target.files ?? [])].filter((f) => !f.name.startsWith("."));
-    if (files.length) readFiles(files, files.length > 1 ? `${files.length} fichiers` : files[0].name);
+    if (files.length) readFiles(files, files.length > 1 ? t("docs.files.count", { n: files.length }) : files[0].name);
     e.target.value = "";
   };
 
   const buttons = (
     <div className={`flex flex-wrap items-center gap-2 ${compact ? "" : "justify-center"}`}>
       <label className={`fl-btn fl-btn--sm ${disabled ? "pointer-events-none opacity-50" : "cursor-pointer"}`}>
-        Choisir des fichiers
+        {t("docs.pickFiles")}
         <input type="file" multiple accept={ACCEPT} disabled={disabled} className="sr-only" onChange={pick} />
       </label>
       <label className={`fl-btn fl-btn--ghost fl-btn--sm ${disabled ? "pointer-events-none opacity-50" : "cursor-pointer"}`}>
-        Choisir un dossier
+        {t("docs.pickFolder")}
         {/* webkitdirectory : attribut non typé par React, on le passe tel quel. */}
         <input type="file" disabled={disabled} className="sr-only" onChange={pick} {...{ webkitdirectory: "" }} />
       </label>
       {!compact && (
         <button type="button" disabled={disabled} onClick={onExample} className="fl-btn fl-btn--ghost fl-btn--sm">
-          Essayer avec un exemple
+          {t("docs.example")}
         </button>
       )}
       <div ref={menuRef} className="relative">
@@ -173,11 +181,11 @@ export function DocumentDrop(props: Props) {
     <div className="relative w-full">
       {(importing || notice) && (
         <div className="mb-2 flex flex-wrap items-center justify-center gap-2 px-2">
-          {importing && <span className="fl-badge bg-card text-muted">Lecture des documents…</span>}
+          {importing && <span className="fl-badge bg-card text-muted">{t("docs.reading")}</span>}
           {notice && (
             <span className={`fl-badge ${notice.ok ? "bg-card text-body" : "bg-[#fff4f1] text-red-deep"}`}>
               {notice.text}
-              <button type="button" aria-label="Fermer le message" className="ml-1 text-muted hover:text-ink" onClick={() => setNotice(null)}>
+              <button type="button" aria-label={t("docs.closeMessage")} className="ml-1 text-muted hover:text-ink" onClick={() => setNotice(null)}>
                 ×
               </button>
             </span>
@@ -187,7 +195,7 @@ export function DocumentDrop(props: Props) {
 
       {compact ? (
         <div className="flex flex-wrap items-center gap-3 rounded-[28px] border border-dashed border-line-2 bg-white px-5 py-3 shadow-[0_10px_30px_#00000010,0_2px_8px_#0000000a]">
-          <span className="text-[14px] text-body">{disabled ? "Analyse en cours…" : "Déposez un autre document ici"}</span>
+          <span className="text-[14px] text-body">{disabled ? t("docs.compact.busy") : t("docs.compact.idle")}</span>
           <div className="flex-1" />
           {buttons}
         </div>
@@ -198,8 +206,8 @@ export function DocumentDrop(props: Props) {
             <path d="M13 17v-6m-3 3 3-3 3 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           <div>
-            <p className="text-[17px] font-medium text-ink">Glissez un arrêté, une délibération ou un dossier entier</p>
-            <p className="mt-1 text-[13.5px] text-muted">PDF, Word, texte — ou décisions du Conseil d’État (.zip / .xml) pour enrichir la base.</p>
+            <p className="text-[17px] font-medium text-ink">{t("docs.hero.title")}</p>
+            <p className="mt-1 text-[13.5px] text-muted">{t("docs.hero.sub")}</p>
           </div>
           {buttons}
         </div>
@@ -213,7 +221,7 @@ export function DocumentDrop(props: Props) {
             exit={{ opacity: 0 }}
             className="pointer-events-none fixed inset-3 z-50 grid place-items-center rounded-[28px] border-2 border-dashed border-red bg-[#fff4f1ee] text-[20px] font-medium text-ink"
           >
-            Déposez vos documents
+            {t("docs.dropOverlay")}
           </motion.div>
         )}
       </AnimatePresence>
@@ -236,16 +244,16 @@ async function entryFiles(entry: FileSystemEntry): Promise<File[]> {
   return (await Promise.all(children.map(entryFiles))).flat();
 }
 
-const fmtPrice = (n: number) => n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function ModelButton({ model, open, onToggle }: { model: ModelId; open: boolean; onToggle: () => void }) {
+  const { t } = useI18n();
   const choice = MODEL_CHOICES.find((m) => m.id === model) ?? MODEL_CHOICES[0];
   return (
     <button
       type="button"
       aria-haspopup="listbox"
       aria-expanded={open}
-      aria-label={`Modèle : ${choice.label}`}
+      aria-label={t("docs.model.aria", { label: choice.label })}
       onClick={onToggle}
       className={`flex h-9 max-w-[220px] items-center gap-2 rounded-full border px-3 text-[14px] text-ink transition-colors focus-visible:outline-2 focus-visible:outline-red ${
         open ? "border-[#ff2e2e40] bg-[#fff4f1]" : "border-line hover:bg-card"
@@ -261,6 +269,8 @@ function ModelButton({ model, open, onToggle }: { model: ModelId; open: boolean;
 }
 
 function ModelMenu({ model, onPick, onClose }: { model: ModelId; onPick: (id: ModelId) => void; onClose: () => void }) {
+  const { t, lang } = useI18n();
+  const fmtPrice = (n: number) => n.toLocaleString(lang === "fr" ? "fr-FR" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const listRef = useRef<HTMLUListElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(() => Math.max(0, MODEL_CHOICES.findIndex((m) => m.id === model)));
@@ -300,12 +310,12 @@ function ModelMenu({ model, onPick, onClose }: { model: ModelId; onPick: (id: Mo
       style={{ maxHeight: place.max }}
       className={`absolute right-0 z-30 flex w-[min(380px,calc(100vw-32px))] flex-col rounded-[18px] border border-line bg-white p-2 shadow-[var(--shadow-lg)] ${place.up ? "bottom-full mb-3" : "top-full mt-3"}`}
     >
-      <p className="shrink-0 px-3 pt-2 pb-2 fl-eyebrow">Modèle de jugement</p>
+      <p className="shrink-0 px-3 pt-2 pb-2 fl-eyebrow">{t("docs.model.title")}</p>
       <ul
         ref={listRef}
         role="listbox"
         tabIndex={-1}
-        aria-label="Choisir un modèle"
+        aria-label={t("docs.model.choose")}
         aria-activedescendant={`model-opt-${MODEL_CHOICES[active].id}`}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown") {
@@ -340,10 +350,10 @@ function ModelMenu({ model, onPick, onClose }: { model: ModelId; onPick: (id: Mo
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2 text-[14px] font-medium text-ink">
                   {choice.label}
-                  {i === 0 && <span className="rounded-full bg-gradient-to-r from-[#ff2e2e] to-[#ff7a2e] px-2 py-0.5 text-[10.5px] font-semibold text-white">Recommandé</span>}
+                  {i === 0 && <span className="rounded-full bg-gradient-to-r from-[#ff2e2e] to-[#ff7a2e] px-2 py-0.5 text-[10.5px] font-semibold text-white">{t("docs.model.recommended")}</span>}
                 </span>
                 <span className="block truncate text-[12px] text-muted">
-                  {choice.hint.replace(/^Recommandé · /, "")} · {fmtPrice(choice.price[0])} $ / {fmtPrice(choice.price[1])} $ par M tokens
+                  {t("docs.model.price", { hint: t(`docs.hint.${choice.id}` as const), in: fmtPrice(choice.price[0]), out: fmtPrice(choice.price[1]) })}
                 </span>
               </span>
               {selected && (
@@ -356,7 +366,7 @@ function ModelMenu({ model, onPick, onClose }: { model: ModelId; onPick: (id: Mo
         })}
       </ul>
       <p className="mt-1 shrink-0 border-t border-line px-3 pt-2.5 pb-1.5 text-[11.5px] leading-snug text-muted">
-        Les recherches tournent toujours sur Claude Haiku 5.5 ; ce modèle rend le jugement final.
+        {t("docs.model.note")}
       </p>
     </motion.div>
   );
