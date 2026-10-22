@@ -19,7 +19,7 @@ npx vitest run test/evidence.test.ts -t "idempotent"   # un seul test
 npm run typecheck
 ```
 
-Variables (`scout/.env`, chargé automatiquement) : `ANTHROPIC_API_KEY` est obligatoire hors `--collect-only`. Facultatives : `SCOUT_POD_MODEL` (par défaut `claude-sonnet-5-5`), `SCOUT_SYNTHESIS_MODEL` (par défaut `claude-opus-5-5`), `GITHUB_TOKEN`, `JINA_API_KEY`, `OPENALEX_API_KEY`, `COMPANIES_HOUSE_API_KEY`.
+Variables (`scout/.env`, chargé automatiquement ; la liste complète des clés BYOK est dans `scout/src/sources/catalog.ts`) : `ANTHROPIC_API_KEY` est obligatoire hors `--collect-only`. Facultatives : `SCOUT_POD_MODEL` (par défaut `claude-sonnet-5-5`), `SCOUT_SYNTHESIS_MODEL` (par défaut `claude-opus-5-5`), `GITHUB_TOKEN`, `JINA_API_KEY`, `OPENALEX_API_KEY`, `COMPANIES_HOUSE_API_KEY`.
 
 ## Architecture du prototype
 
@@ -31,7 +31,7 @@ Le flux est `cli.ts` → `orchestrator.ts` → `identity.ts`, puis `agents.ts` �
   - `as_of` et `retrieved_at`, `limitations`, `derived_from`.
 
   Ce modèle est repris de `morluto/rea`. Le `Ledger` est partagé par tous les agents. `PodReport` exige au moins un `evidence_ids` par métrique.
-- **`identity.ts` n'utilise pas d'IA.** Il lit le site, puis les mentions légales et la politique de confidentialité, et en extrait le SIREN, le HRB ou la raison sociale. Avec un SIREN, il interroge le registre INSEE/RNE et le BODACC. Les preuves obtenues sont injectées dans le dossier de chaque agent.
+- **`identity.ts` n'utilise pas d'IA.** Il lit le site, puis les mentions légales et la politique de confidentialité, et en extrait le SIREN, le HRB ou la raison sociale. Avec un SIREN, il interroge le registre INSEE/RNE et le BODACC. Il passe de la filiale à la maison mère quand le site cite une autre entité au même siège (cas d'alan.com). Les preuves obtenues sont injectées dans le dossier de chaque agent.
 - **`sources/*.ts` : une fonction par source**, qui renvoie des `EvidenceInput[]` et n'appelle jamais de LLM. Pour ajouter une source :
   1. écrire la fonction dans `sources/` ;
   2. l'exposer comme outil dans `tools.ts` ;

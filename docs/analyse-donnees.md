@@ -135,8 +135,8 @@ URL ──► Étape 0 · identité (sans IA)
 ## 5. Risques et limites
 
 - **Comptes confidentiels.** Beaucoup de jeunes sociétés françaises déposent leurs comptes en confidentialité. Le prototype l'indique comme limite au lieu de conclure « pas de CA ».
-- **Holding ou filiale.** Sur alan.com, le SIREN affiché est celui d'Alan Insurance, une filiale, et non celui de la société qui lève. L'agent Snapshot est chargé de vérifier quelle entité porte l'activité.
-- **Hors de France.** Avrea affiche « Avrea Ltd » alors qu'Harmonic Scout la dit basée à Berlin. Sans North Data ni Companies House, l'entité légale reste « non établie » et le prototype le signale.
+- **Holding ou filiale.** Sur alan.com, le SIREN affiché est celui d'Alan Insurance, la filiale d'assurance. Le site cite aussi « Alan SA ». Le prototype trouve dans le registre la société ALAN (SIREN 818 353 070) au **même siège** et la retient comme entité principale probable. C'est une preuve « déduite », dont le lien capitalistique reste à vérifier.
+- **Hors de France.** Le site d'Avrea cite **deux** raisons sociales : « Avrea Ltd » dans la politique de confidentialité et « Avrea Oy » (forme finlandaise) dans les CGU. Harmonic Scout, lui, la situe à Berlin. Le prototype garde les deux mentions comme preuves ; c'est exactement le genre d'écart qu'un comité veut voir. Il faudra un connecteur au registre finlandais (PRH, gratuit) pour trancher.
 - **RGPD.** On ne garde des dirigeants que le nom et la fonction. Pas de scraping de profils personnels.
 - **CGU.** Pas de rétro-ingénierie des API privées (Harmonic, LinkedIn, Welcome to the Jungle). On n'utilise que des API officielles, des endpoints publics prévus pour être lus, ou les clés du client.
 - **Coût d'une fiche.** Environ 6 agents × 5 recherches web, plus les tokens Sonnet, plus une synthèse Opus : quelques dizaines de centimes à 1 € par fiche. À mesurer sur 20 boîtes réelles.
@@ -144,7 +144,7 @@ URL ──► Étape 0 · identité (sans IA)
 ## 6. Prochaines étapes
 
 1. Faire tourner le prototype sur les 10 boîtes de l'étape 2 de la roadmap et comparer les résultats aux notes des fonds.
-2. Brancher Companies House et North Data pour couvrir le Royaume-Uni et l'Allemagne.
+2. Brancher Companies House, North Data et le registre finlandais PRH (API ouverte) pour couvrir le Royaume-Uni, l'Allemagne et les pays nordiques.
 3. Stocker les preuves dans une base et relancer la collecte chaque semaine, pour obtenir des **séries** : effectif, offres d'emploi, capital.
 4. Candidater à l'API Google Trends.
 5. Brancher un connecteur BYOK Harmonic via son MCP officiel pour un premier fonds pilote.
