@@ -56,19 +56,23 @@ describe("OpenRouter", () => {
     expect(bodies[1].messages.at(-1)).toMatchObject({ role: "tool", tool_call_id: "c1", content: "résultats pour pesticides" });
   });
 
-  it("GPT passe par OpenAI en direct quand OPENAI_API_KEY existe, le reste par OpenRouter", async () => {
+  it("choix produit : tout passe par OpenAI (même gamme), sauf Jev servi par OpenRouter", async () => {
     process.env.OPENAI_API_KEY = "sk-test";
     const urls: string[] = [];
     vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
       urls.push(url);
       bodies.push(JSON.parse(String(init.body)));
-      return reply({ role: "assistant", content: '{"ok":true}' });
+      return Response.json({ choices: [{ message: { role: "assistant", content: '{"ok":true}' }, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 10, cost: 0.002 } });
     });
     const schema = z.object({ ok: z.boolean() });
-    await structured(new CostMeter(), "gpt-6-luna", "low", "s", "u", schema);
     await structured(new CostMeter(), "mistral-large-4", "low", "s", "u", schema);
-    expect(urls).toEqual(["https://api.openai.com/v1/chat/completions", "https://openrouter.ai/api/v1/chat/completions"]);
-    expect(bodies[0]).toMatchObject({ model: "gpt-6-luna", max_completion_tokens: 16000, reasoning_effort: "low" });
-    expect(bodies[0].max_tokens).toBeUndefined();
+    await structured(new CostMeter(), "claude-haiku-5-5", "low", "s", "u", schema);
+    const meter = new CostMeter();
+    await structured(meter, "jev", "low", "s", "u", schema);
+    expect(urls).toEqual(["https://api.openai.com/v1/chat/completions", "https://api.openai.com/v1/chat/completions", "https://openrouter.ai/api/v1/chat/completions"]);
+    expect(bodies.map((b) => b.model)).toEqual(["gpt-6-sol", "gpt-6-luna", "typesafe/jev-router"]);
+    expect(bodies[0]).toMatchObject({ max_completion_tokens: 16000, reasoning_effort: "low" });
+    expect(meter.usd).toBe(0.002); // coût réel renvoyé par OpenRouter pour le routeur Jev
   });
+
 });
