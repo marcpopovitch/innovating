@@ -14,18 +14,19 @@ export interface ArticleHit {
   snippet: string;
 }
 
-export async function searchCorpus(actor: string, query: string, code?: string, limit = 8): Promise<ArticleHit[]> {
+export async function searchCorpus(actor: string, query: string, code?: string, limit = 8, since?: string): Promise<ArticleHit[]> {
   return tracedQuery<ArticleHit>(
     actor,
     "recherche plein texte",
-    `articles « ${query} »${code ? ` dans ${code}` : ""}`,
+    `articles « ${query} »${code ? ` dans ${code}` : ""}${since ? ` depuis ${since}` : ""}`,
     `select id, code_title, num, etat, section,
             ts_headline('french', text, q, 'MaxWords=45, MinWords=20, StartSel=«, StopSel=»') as snippet
        from articles, websearch_to_tsquery('french', $1) q
       where tsv @@ q and etat = 'VIGUEUR' and ($2::text is null or code_title ilike '%' || $2 || '%')
+        and ($4::date is null or date_debut >= $4::date)
       order by ts_rank_cd(tsv, q) desc
       limit $3`,
-    [query, code ?? null, limit],
+    [query, code ?? null, limit, since ?? null],
   );
 }
 
@@ -75,10 +76,10 @@ export function makeResearchTools(actor: string, state: { candidates: Map<string
   return [
     betaZodTool({
       name: "search_corpus",
-      description: "Recherche plein texte (français, opérateurs websearch : guillemets, OR, -) dans les articles EN VIGUEUR des codes : CGCT, Code rural, Code de la route, Code de la santé publique, Code de l'environnement, Code de l'urbanisme, Code de la sécurité intérieure, Code pénal, CRPA. Filtre optionnel `code` (sous-chaîne du nom du code).",
-      inputSchema: z.object({ query: z.string(), code: z.string().optional() }),
-      run: async ({ query, code }) => {
-        const hits = await searchCorpus(actor, query, code);
+      description: "Recherche plein texte (français, opérateurs websearch : guillemets, OR, -) dans les articles EN VIGUEUR des codes : CGCT, Code rural, Code de la route, Code de la santé publique, Code de l'environnement, Code de l'urbanisme, Code de la sécurité intérieure, Code pénal, CRPA. Filtres optionnels : `code` (sous-chaîne du nom du code) et `since` (AAAA-MM-JJ : seulement les versions entrées en vigueur depuis cette date, pour voir ce qui a changé).",
+      inputSchema: z.object({ query: z.string(), code: z.string().optional(), since: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }),
+      run: async ({ query, code, since }) => {
+        const hits = await searchCorpus(actor, query, code, 8, since);
         hits.forEach((h) => state.consulted.add(h.id));
         return fmtHits(hits);
       },

@@ -1,6 +1,38 @@
 // Contrat partagé entre les agents, l'API et l'interface.
 
-export type Verdict = "conflit" | "doublon" | "vide" | "incompetence" | "conforme";
+export type Verdict = "conflit" | "doublon" | "vide" | "incompetence" | "conforme" | "existant";
+
+/**
+ * Deux usages distincts :
+ * - controle : un texte presque prêt, on cherche les conflits avec le droit existant ;
+ * - exploration : une idée encore floue, on cartographie ce qui existe déjà.
+ */
+export type Mode = "controle" | "exploration";
+
+/** Modèles proposés dans l'interface (Albert = LLM de l'État, affiché « bientôt »). */
+export const MODEL_CHOICES = [
+  { id: "claude-opus-5-5", label: "Claude Opus 5.5", hint: "Le plus rigoureux" },
+  { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", hint: "Plus rapide" },
+  { id: "albert", label: "Albert (État)", hint: "Bientôt", disabled: true },
+] as const;
+export type ModelId = (typeof MODEL_CHOICES)[number]["id"];
+
+/** Question de cadrage posée AVANT de lancer les agents. */
+export interface CadrageQuestion {
+  id: string; // domaine | periode | perimetre | … (ou une question propre à la demande)
+  question: string;
+  options: string[]; // réponses proposées en puces
+  allow_free: boolean; // l'utilisateur peut écrire sa propre réponse
+  default: string | null;
+}
+
+/** POST /api/cadrage { prompt } → CadrageResponse */
+export interface CadrageResponse {
+  mode: Mode;
+  title: string; // titre court de la conversation
+  reformulation: string; // ce que l'IA a compris, en une phrase
+  questions: CadrageQuestion[];
+}
 export type Severity = "critique" | "majeure" | "mineure" | "info";
 export type AgentName = "orchestrateur" | "analyste" | "chercheur" | "juge" | "contradicteur" | "redacteur" | "veilleur" | "impact";
 
@@ -47,6 +79,9 @@ export interface AnalysisSummary {
 export interface Analysis {
   id: string;
   kind: "acte" | "jo";
+  mode: Mode;
+  model: ModelId;
+  cadrage: Record<string, string> | null; // réponses aux questions de cadrage
   title: string;
   input: string;
   collectivite: string | null;
@@ -96,7 +131,9 @@ export interface VeilleItem {
 }
 
 // API :
-// POST /api/analyses  { title, input, collectivite?, date_acte? } → { id }
+// POST /api/cadrage   { prompt } → CadrageResponse (fonctionne aussi sans clé : questions par défaut)
+// POST /api/analyses  { title, input, mode, model, cadrage, collectivite?, date_acte? } → { id }
+// GET  /api/analyses  → { analyses: Analysis[] } (les conversations, plus récentes d'abord)
 // GET  /api/analyses/[id] → { analysis: Analysis, findings: Finding[] }
 // GET  /api/analyses/[id]/stream → SSE d'AgentEvent, se termine sur type "fin"
 // POST /api/feedback  { finding_id, decision: "valide" | "rejete", reason? } → { ok: true }

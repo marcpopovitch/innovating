@@ -5,9 +5,12 @@ import { db } from "@/lib/db";
 
 const Body = z.object({
   title: z.string().min(1).max(300),
-  input: z.string().min(20).max(60_000),
+  input: z.string().min(3).max(60_000),
   collectivite: z.string().max(200).optional().nullable(),
   date_acte: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable().or(z.literal("")),
+  mode: z.enum(["controle", "exploration"]).default("controle"),
+  model: z.enum(["claude-opus-5-5", "claude-sonnet-5-5", "albert"]).default("claude-opus-5-5"),
+  cadrage: z.record(z.string(), z.string().max(500)).optional().nullable(),
 });
 
 export async function POST(request: Request) {
@@ -26,7 +29,7 @@ export async function GET() {
   await connection(); // toujours calculé à la requête
   const client = await db();
   const { rows } = await client.query(
-    "select id, kind, title, collectivite, status, summary, cost_usd::float, latency_ms, created_at from analyses order by created_at desc limit 20",
+    "select id, kind, mode, model, cadrage, title, collectivite, status, summary, cost_usd::float, latency_ms, created_at from analyses order by created_at desc limit 50",
   );
   return Response.json({ analyses: rows });
 }

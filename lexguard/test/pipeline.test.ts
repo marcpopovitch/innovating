@@ -25,7 +25,16 @@ function fakeApi(judgeReply: Judge) {
     const system = String(body.system ?? "");
     const last = body.messages.at(-1);
     let content: unknown[];
-    if (system.includes("découpes")) {
+    if (system.includes("prépares une recherche juridique")) {
+      calls.push("planificateur");
+      content = [{ type: "text", text: JSON.stringify({ angles: [{ angle: "Qui est compétent pour interdire les pesticides ?", pourquoi: "compétence" }] }) }];
+    } else if (system.includes("dresse l'état du droit")) {
+      calls.push("cartographe");
+      content = [{ type: "text", text: JSON.stringify({ headline: "La police des pesticides relève de l'État.", items: [
+        { kind: "existant", title: "Police spéciale des produits phytopharmaceutiques", explanation: "L'État décide.", citations: [{ article_id: RURAL.id, quote: judgeReply.quote }], suggestion: "Saisir le préfet." },
+        { kind: "existant", title: "Citation inventée", explanation: "…", citations: [{ article_id: RURAL.id, quote: "Le maire décide seul de tout en matière de pesticides" }], suggestion: "" },
+      ] }) }];
+    } else if (system.includes("découpes")) {
       calls.push("analyste");
       content = [{ type: "text", text: JSON.stringify({ autorite: "Le maire de Testville", dispositions: [{ text: "L'utilisation de produits phytopharmaceutiques est interdite sur le territoire communal.", objet: "interdiction des pesticides", mesure: "interdiction générale", autorite: "maire", perimetre: "territoire communal", references: ["CGCT L2212-2"] }] }) }];
     } else if (system.includes("chercheur juridique")) {
@@ -69,10 +78,10 @@ beforeAll(async () => {
   }
 });
 
-async function run(judge: Judge) {
+async function run(judge: Judge, mode: "controle" | "exploration" = "controle") {
   const { client, calls } = fakeApi(judge);
   llm.setAnthropicClient(client);
-  const id = await mod.createAnalysis({ title: "Arrêté anti-pesticides", input: "Article 1 : l'utilisation de produits phytopharmaceutiques est interdite sur le territoire communal.", collectivite: "Testville", date_acte: "2026-10-01" });
+  const id = await mod.createAnalysis({ title: "Arrêté anti-pesticides", input: "Article 1 : l'utilisation de produits phytopharmaceutiques est interdite sur le territoire communal.", collectivite: "Testville", date_acte: "2026-10-01", mode, cadrage: { domaine: "Environnement et pesticides", periode: "Droit en vigueur aujourd'hui" } });
   await mod.runAnalysis(id);
   const c = await dbmod.db();
   const findings = (await c.query<{ verdict: string; verified: boolean; rejection_reason: string | null; citations: Array<{ url: string }> }>("select verdict, verified, rejection_reason, citations from findings where analysis_id = $1", [id])).rows;
@@ -101,5 +110,13 @@ describe("équipe d'agents", () => {
     expect(r.findings[0].verified).toBe(false);
     expect(r.findings[0].rejection_reason).toMatch(/ne figure pas/);
     expect(r.events.some((e) => e.agent === "contradicteur" && e.type === "rejet")).toBe(true);
+  });
+
+  it("mode exploration : planificateur → chercheur → cartographe, citations inventées écartées", async () => {
+    const r = await run({ quote: "prendre toute mesure d'interdiction, de restriction ou de prescription particulière concernant", keep: true }, "exploration");
+    expect(r.calls).toEqual(["planificateur", "chercheur:recherche", "chercheur:dossier", "chercheur:fin", "cartographe"]);
+    expect(r.findings.map((f) => [f.verdict, f.verified])).toEqual([["existant", true], ["existant", false]]);
+    expect(r.analysis.status).toBe("termine");
+    expect(r.analysis.summary.counts.existant).toBe(1);
   });
 });

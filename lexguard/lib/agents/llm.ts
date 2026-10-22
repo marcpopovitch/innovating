@@ -1,9 +1,26 @@
 // Client Claude partagé, choix des modèles et comptabilité des coûts.
+import { AsyncLocalStorage } from "node:async_hooks";
 import Anthropic from "@anthropic-ai/sdk";
 
-export const MODELS = {
+const DEFAULT_MODELS = {
   fast: process.env.LEXGUARD_FAST_MODEL ?? "claude-sonnet-5-5", // analyste, chercheurs, rédacteur
   deep: process.env.LEXGUARD_DEEP_MODEL ?? "claude-opus-5-5", // juge, contradicteur
+};
+
+// Le modèle choisi dans l'interface vaut pour toute une analyse, y compris ses
+// sous-agents lancés en parallèle : on le porte dans le contexte asynchrone.
+const modelContext = new AsyncLocalStorage<typeof DEFAULT_MODELS>();
+export function withModel<T>(deep: string, fn: () => Promise<T>): Promise<T> {
+  const fast = deep === "claude-sonnet-5-5" ? deep : DEFAULT_MODELS.fast;
+  return modelContext.run({ fast, deep }, fn);
+}
+export const MODELS = {
+  get fast() {
+    return modelContext.getStore()?.fast ?? DEFAULT_MODELS.fast;
+  },
+  get deep() {
+    return modelContext.getStore()?.deep ?? DEFAULT_MODELS.deep;
+  },
 };
 
 // Prix publics par million de tokens (entrée, sortie), octobre 2026.

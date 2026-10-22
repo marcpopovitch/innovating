@@ -54,7 +54,18 @@ export async function analyst(meter: CostMeter, acte: string): Promise<{ autorit
 
 // ---------- 2. Chercheur (agent multi-étapes avec outils) ----------
 
-export async function researcher(meter: CostMeter, d: Disposition, acte: { autorite: string; collectivite: string | null }, onTool: (msg: string) => void) {
+export interface ResearchOptions {
+  mode?: "controle" | "exploration";
+  cadrage?: string; // texte de cadrage (domaine, période, périmètre…)
+}
+
+const RESEARCH_METHOD = {
+  controle: `Tu es chercheur juridique pour une préfecture qui exerce le contrôle de légalité. Pour UNE disposition d'un acte local, tu constitues le dossier de normes supérieures que le juge devra lire.
+Méthode : (1) identifie la base de compétence de l'autorité (ex. pouvoirs de police du maire, CGCT L2212-1 et suivants) ; (2) cherche s'il existe une police spéciale ou une compétence d'une autre autorité (État, préfet, ministre) sur cet objet ; (3) cherche les règles de fond (seuils, interdictions, procédures) ; (4) vérifie les doublons avec les actes locaux existants ; (5) si l'acte vise un texte UE, lis-le.`,
+  exploration: `Tu es chercheur juridique pour une collectivité qui envisage une nouvelle mesure. Pour UN angle de recherche, tu cartographies ce qui existe déjà : règles en vigueur, autorité compétente, textes récents du Journal officiel, actes déjà pris par des collectivités, droit de l'UE si le périmètre l'inclut.`,
+};
+
+export async function researcher(meter: CostMeter, d: Disposition, acte: { autorite: string; collectivite: string | null }, onTool: (msg: string) => void, opts: ResearchOptions = {}) {
   const state = { candidates: new Map<string, string>(), consulted: new Set<string>() };
   const tools = makeResearchTools(`chercheur ${d.id}`, state);
   const runner = anthropic().beta.messages.toolRunner({
@@ -63,14 +74,13 @@ export async function researcher(meter: CostMeter, d: Disposition, acte: { autor
     max_iterations: 14,
     output_config: { effort: "medium" },
     ...FALLBACK,
-    system: `Tu es chercheur juridique pour une préfecture qui exerce le contrôle de légalité. Pour UNE disposition d'un acte local, tu constitues le dossier de normes supérieures que le juge devra lire.
-Méthode : (1) identifie la base de compétence de l'autorité (ex. pouvoirs de police du maire, CGCT L2212-1 et suivants) ; (2) cherche s'il existe une police spéciale ou une compétence d'une autre autorité (État, préfet, ministre) sur cet objet ; (3) cherche les règles de fond (seuils, interdictions, procédures) ; (4) vérifie les doublons avec les actes locaux existants ; (5) si l'acte vise un texte UE, lis-le. Fais plusieurs recherches avec des formulations juridiques différentes, lis les articles prometteurs en entier et suis leurs liens.
+    system: `${RESEARCH_METHOD[opts.mode ?? "controle"]} Fais plusieurs recherches avec des formulations juridiques différentes, lis les articles prometteurs en entier et suis leurs liens.
 ${SOURCES_RULE} Termine par submit_dossier.`,
     tools,
     messages: [
       {
         role: "user",
-        content: `Autorité : ${acte.autorite}${acte.collectivite ? ` (${acte.collectivite})` : ""}\nDisposition ${d.id} : ${d.text}\nObjet : ${d.objet}\nMesure : ${d.mesure}\nPérimètre : ${d.perimetre ?? "—"}\nTextes visés par l'acte : ${d.references.join(" ; ") || "aucun"}`,
+        content: `Autorité : ${acte.autorite}${acte.collectivite ? ` (${acte.collectivite})` : ""}\nDisposition ${d.id} : ${d.text}\nObjet : ${d.objet}\nMesure : ${d.mesure}\nPérimètre : ${d.perimetre ?? "—"}\nTextes visés par l'acte : ${d.references.join(" ; ") || "aucun"}${opts.cadrage ?? ""}`,
       },
     ],
   });
@@ -120,7 +130,7 @@ export async function doctrine(d: Disposition): Promise<string> {
     .join("\n")}`;
 }
 
-export async function judge(meter: CostMeter, d: Disposition, articles: FullArticle[], why: Map<string, string>, notes: string, dateActe: string | null): Promise<JudgeOutput> {
+export async function judge(meter: CostMeter, d: Disposition, articles: FullArticle[], why: Map<string, string>, notes: string, dateActe: string | null, cadrage = ""): Promise<JudgeOutput> {
   return parse(
     meter,
     MODELS.deep,
@@ -132,7 +142,7 @@ export async function judge(meter: CostMeter, d: Disposition, articles: FullArti
 - vide : la disposition s'appuie sur un texte absent, abrogé ou non encore pris (décret d'application manquant) ;
 - conforme : aucun problème démontrable avec les textes fournis.
 Exige la preuve : chaque citation reprend MOT POUR MOT un passage d'un article fourni (balise <article>), sinon ne la mets pas. Si les textes fournis ne suffisent pas à démontrer un problème, réponds « conforme » avec gravité « info ». La date de référence est ${dateActe ?? "aujourd'hui"}. ${SOURCES_RULE}`,
-    `Disposition : ${d.text}\nObjet : ${d.objet}\nMesure : ${d.mesure}\nAutorité : ${d.autorite}\nPérimètre : ${d.perimetre ?? "—"}\n\nNotes du chercheur : ${notes || "—"}\n\nTextes du dossier :\n${articleBlock(articles, why)}${await doctrine(d)}`,
+    `Disposition : ${d.text}\nObjet : ${d.objet}\nMesure : ${d.mesure}\nAutorité : ${d.autorite}\nPérimètre : ${d.perimetre ?? "—"}\n\nNotes du chercheur : ${notes || "—"}${cadrage}\n\nTextes du dossier :\n${articleBlock(articles, why)}${await doctrine(d)}`,
     VerdictSchema,
   );
 }

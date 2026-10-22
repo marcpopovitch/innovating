@@ -4,7 +4,7 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
   const { id } = await ctx.params;
   const client = await db();
   const { rows } = await client.query(
-    "select id, kind, title, input, collectivite, date_acte::text, status, summary, cost_usd::float, latency_ms, created_at from analyses where id = $1",
+    "select id, kind, mode, model, cadrage, title, input, collectivite, date_acte::text, status, summary, cost_usd::float, latency_ms, created_at from analyses where id = $1",
     [id],
   );
   if (!rows.length) return Response.json({ error: "Analyse introuvable" }, { status: 404 });

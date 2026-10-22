@@ -3,9 +3,11 @@
 import { randomUUID } from "node:crypto";
 import { db } from "../db";
 import { legifranceArticleUrl } from "../dila";
-import type { AnalysisSummary, Citation, Disposition, Severity, Verdict } from "../types";
+import type { AnalysisSummary, Citation, Disposition, Mode, Severity, Verdict } from "../types";
+import { cadrageText, periodSince } from "./cadrage";
 import { emit } from "./events";
-import { CostMeter } from "./llm";
+import { runExploration } from "./exploration";
+import { CostMeter, withModel } from "./llm";
 import { analyst, critic, judge, researcher, writer } from "./roles";
 import { getArticles } from "./tools";
 import { checkCitation } from "./verify";
@@ -16,18 +18,24 @@ export interface AnalysisInput {
   collectivite?: string | null;
   date_acte?: string | null;
   kind?: "acte" | "jo";
+  mode?: Mode;
+  model?: string;
+  cadrage?: Record<string, string> | null;
 }
 
 export async function createAnalysis(input: AnalysisInput): Promise<string> {
   const id = randomUUID();
   const client = await db();
-  await client.query("insert into analyses (id, kind, title, input, collectivite, date_acte) values ($1, $2, $3, $4, $5, $6)", [
+  await client.query("insert into analyses (id, kind, title, input, collectivite, date_acte, mode, model, cadrage) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)", [
     id,
     input.kind ?? "acte",
     input.title,
     input.input,
     input.collectivite ?? null,
     input.date_acte || null,
+    input.mode ?? "controle",
+    input.model ?? "claude-opus-5-5",
+    input.cadrage ? JSON.stringify(input.cadrage) : null,
   ]);
   return id;
 }
@@ -39,16 +47,16 @@ interface StoredFinding {
   verified: boolean;
 }
 
-async function analyseDisposition(analysisId: string, meter: CostMeter, d: Disposition, ctx: { autorite: string; collectivite: string | null; date: string | null }, consultedAll: Set<string>): Promise<StoredFinding> {
+async function analyseDisposition(analysisId: string, meter: CostMeter, d: Disposition, ctx: { autorite: string; collectivite: string | null; date: string | null; cadrage: string }, consultedAll: Set<string>): Promise<StoredFinding> {
   const tag = `${d.id} · ${d.objet}`;
   await emit(analysisId, "chercheur", "etape", `Recherche des normes applicables — ${tag}`);
-  const dossier = await researcher(meter, d, ctx, (msg) => void emit(analysisId, "chercheur", "outil", `${d.id} → ${msg}`));
+  const dossier = await researcher(meter, d, ctx, (msg) => void emit(analysisId, "chercheur", "outil", `${d.id} → ${msg}`), { mode: "controle", cadrage: ctx.cadrage });
   dossier.consulted.forEach((id) => consultedAll.add(id));
   const articles = await getArticles("juge", [...dossier.candidates.keys()]);
   await emit(analysisId, "chercheur", "resultat", `${d.id} : ${articles.length} articles retenus sur ${dossier.consulted.size} consultés`, { articles: articles.map((a) => `${a.code_title} ${a.num}`) });
 
   await emit(analysisId, "juge", "etape", `Qualification juridique — ${tag}`);
-  const verdict = await judge(meter, d, articles, dossier.candidates, dossier.notes, ctx.date);
+  const verdict = await judge(meter, d, articles, dossier.candidates, dossier.notes, ctx.date, ctx.cadrage);
 
   // Contrôles en code : chaque citation doit exister, être en vigueur et contenir l'extrait.
   const byId = new Map(articles.map((a) => [a.id, a]));
@@ -86,20 +94,47 @@ async function analyseDisposition(analysisId: string, meter: CostMeter, d: Dispo
 
 export async function runAnalysis(analysisId: string): Promise<void> {
   const client = await db();
+  const { rows } = await client.query<{ model: string }>("select model from analyses where id = $1", [analysisId]);
+  const model = rows[0]?.model && rows[0].model !== "albert" ? rows[0].model : "claude-opus-5-5";
+  return withModel(model, () => run(analysisId));
+}
+
+async function run(analysisId: string): Promise<void> {
+  const client = await db();
   const t0 = Date.now();
   const meter = new CostMeter();
-  const { rows } = await client.query<{ title: string; input: string; collectivite: string | null; date_acte: string | null }>(
-    "select title, input, collectivite, date_acte::text from analyses where id = $1",
+  const { rows } = await client.query<{ title: string; input: string; collectivite: string | null; date_acte: string | null; mode: Mode; cadrage: Record<string, string> | null }>(
+    "select title, input, collectivite, date_acte::text, mode, cadrage from analyses where id = $1",
     [analysisId],
   );
   const a = rows[0];
+  const since = periodSince(a.cadrage);
+  const cadrage = cadrageText(a.cadrage) + (since ? ` Pour la période, utilise le filtre since=${since} de search_corpus et search_jo.` : "");
+  const finish = async (headline: string, summary: AnalysisSummary) => {
+    await client.query("update analyses set status = 'termine', summary = $2, cost_usd = $3, latency_ms = $4, finished_at = now() where id = $1", [
+      analysisId,
+      JSON.stringify(summary),
+      meter.usd.toFixed(4),
+      Date.now() - t0,
+    ]);
+    await emit(analysisId, "orchestrateur", "fin", headline, { cost_usd: meter.usd, latency_ms: Date.now() - t0, calls: meter.calls });
+  };
   try {
+    const consulted = new Set<string>();
+    if (a.mode === "exploration") {
+      const out = await runExploration(analysisId, meter, a.input, cadrage, consulted);
+      const counts = { conflit: 0, doublon: 0, vide: 0, incompetence: 0, conforme: 0, existant: 0 } as Record<Verdict, number>;
+      const found = await client.query<{ verdict: Verdict; n: number }>("select verdict, count(*)::int n from findings where analysis_id = $1 and verified group by 1", [analysisId]);
+      for (const r of found.rows) counts[r.verdict] = r.n;
+      await finish(out.headline, { headline: out.headline, counts, rejected: out.rejected, articles_consulted: consulted.size });
+      return;
+    }
+
     await emit(analysisId, "analyste", "etape", "Découpage de l'acte en dispositions normatives");
     const { autorite, dispositions } = await analyst(meter, a.input);
     await emit(analysisId, "analyste", "resultat", `${dispositions.length} dispositions identifiées (autorité : ${autorite})`, { dispositions });
 
-    const consulted = new Set<string>();
-    const ctx = { autorite, collectivite: a.collectivite, date: a.date_acte };
+    const ctx = { autorite, collectivite: a.collectivite, date: a.date_acte, cadrage };
     await emit(analysisId, "orchestrateur", "etape", `${dispositions.length} chercheurs lancés en parallèle`);
     const settled = await Promise.allSettled(dispositions.map((d) => analyseDisposition(analysisId, meter, d, ctx, consulted)));
     const findings = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
@@ -107,21 +142,13 @@ export async function runAnalysis(analysisId: string): Promise<void> {
 
     await emit(analysisId, "redacteur", "etape", "Rédaction de la synthèse");
     const { headline } = await writer(meter, a.title, findings);
-    const counts = { conflit: 0, doublon: 0, vide: 0, incompetence: 0, conforme: 0 } as Record<Verdict, number>;
+    const counts = { conflit: 0, doublon: 0, vide: 0, incompetence: 0, conforme: 0, existant: 0 } as Record<Verdict, number>;
     for (const f of findings) if (f.verified) counts[f.verdict] += 1;
-    const summary: AnalysisSummary = { headline, counts, rejected: findings.filter((f) => !f.verified).length, articles_consulted: consulted.size };
-
-    await client.query("update analyses set status = 'termine', summary = $2, cost_usd = $3, latency_ms = $4, finished_at = now() where id = $1", [
-      analysisId,
-      JSON.stringify(summary),
-      meter.usd.toFixed(4),
-      Date.now() - t0,
-    ]);
     // Mémoire : l'acte analysé rejoint le corpus local de la collectivité (détection de doublons futurs).
     if (a.collectivite) {
       await client.query("insert into local_acts (collectivite, title, date_acte, text, source) values ($1, $2, $3, $4, 'analyse Ciceron')", [a.collectivite, a.title, a.date_acte, a.input]);
     }
-    await emit(analysisId, "orchestrateur", "fin", headline, { cost_usd: meter.usd, latency_ms: Date.now() - t0, calls: meter.calls });
+    await finish(headline, { headline, counts, rejected: findings.filter((f) => !f.verified).length, articles_consulted: consulted.size });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await client.query("update analyses set status = 'erreur', latency_ms = $2, finished_at = now() where id = $1", [analysisId, Date.now() - t0]);

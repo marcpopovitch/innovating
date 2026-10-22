@@ -142,3 +142,8 @@ create table if not exists veille_impacts (
   created_at    timestamptz not null default now(),
   primary key (jo_id, collectivite, act_title)
 );
+
+-- Conversation : mode (contrôle / exploration), modèle choisi, réponses de cadrage.
+alter table analyses add column if not exists mode text not null default 'controle';
+alter table analyses add column if not exists model text not null default 'claude-opus-5-5';
+alter table analyses add column if not exists cadrage jsonb;
