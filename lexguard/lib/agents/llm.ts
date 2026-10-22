@@ -109,6 +109,25 @@ interface ORMessage {
   tool_call_id?: string;
 }
 
+/**
+ * Appel HTTP vers un fournisseur de modèles, retenté en cas de coupure réseau (« fetch failed »)
+ * ou de surcharge passagère (429, 5xx) : une analyse ne doit pas échouer pour un hoquet du réseau.
+ */
+async function fetchRetry(url: string, init: Omit<RequestInit, "signal">): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const res = await fetch(url, { ...init, signal: AbortSignal.timeout(300_000) });
+      if (attempt < 4 && (res.status === 429 || res.status >= 500)) throw new Error(`HTTP ${res.status}`);
+      return res;
+    } catch (error) {
+      if (attempt >= 4 || (error instanceof Error && error.name === "TimeoutError")) throw error;
+      const cause = (error as { cause?: { code?: string; message?: string } }).cause;
+      console.warn(`[llm] ${new URL(url).host} : ${error instanceof Error ? error.message : error}${cause ? ` (${cause.code ?? cause.message})` : ""}, nouvel essai ${attempt + 1}/4`);
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1)));
+    }
+  }
+}
+
 /** API « chat completions » (OpenAI et OpenRouter partagent le format). */
 async function chatCompletions(r: Route, body: Record<string, unknown>) {
   const openai = r.kind === "openai";
@@ -116,7 +135,7 @@ async function chatCompletions(r: Route, body: Record<string, unknown>) {
   const payload = openai
     ? { ...rest, model: r.model, max_completion_tokens: max_tokens, reasoning_effort: reasoning?.effort }
     : { ...rest, model: r.model, max_tokens, reasoning, usage: { include: true } };
-  const res = await fetch(openai ? "https://api.openai.com/v1/chat/completions" : "https://openrouter.ai/api/v1/chat/completions", {
+  const res = await fetchRetry(openai ? "https://api.openai.com/v1/chat/completions" : "https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
       authorization: `Bearer ${openai ? process.env.OPENAI_API_KEY : process.env.OPENROUTER_API_KEY}`,
@@ -124,7 +143,6 @@ async function chatCompletions(r: Route, body: Record<string, unknown>) {
       ...(openai ? {} : { "x-title": "Ciceron" }),
     },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(300_000),
   });
   if (!res.ok) throw new Error(`${openai ? "OpenAI" : "OpenRouter"} ${res.status} : ${(await res.text()).slice(0, 300)}`);
   return (await res.json()) as {
@@ -203,11 +221,10 @@ async function responsesLoop(meter: CostMeter, r: Route, o: ToolLoopOptions): Pr
     return { type: "function", name: def.name, description: def.description, parameters: def.input_schema, strict: false };
   });
   for (let i = 0; i < o.maxIterations && !o.isDone(); i++) {
-    const res = await fetch("https://api.openai.com/v1/responses", {
+    const res = await fetchRetry("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "content-type": "application/json" },
       body: JSON.stringify({ model: r.model, instructions: o.system, input, tools, reasoning: { effort: o.effort ?? "medium" }, max_output_tokens: 16000, store: false, include: ["reasoning.encrypted_content"] }),
-      signal: AbortSignal.timeout(300_000),
     });
     if (!res.ok) throw new Error(`OpenAI ${res.status} : ${(await res.text()).slice(0, 300)}`);
     const out = (await res.json()) as { output: ResponseItem[]; usage?: { input_tokens?: number; output_tokens?: number } };

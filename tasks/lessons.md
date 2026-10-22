@@ -8,3 +8,5 @@
 [2026-10-22] | `npx prettier --write` lancé sur lexguard alors que le projet n'a pas Prettier : tout un fichier reformaté | Vérifier la config du projet avant tout formateur ; sinon ne pas formater
 
 [2026-10-22] | Nouvelle route testée seulement sur une copie : le serveur de dev de l'utilisateur gardait d'anciens modules serveur (« upsert is not a function ») et un dossier glissé arrivait comme un faux fichier | Vérifier sur le serveur réel de l'utilisateur (port 3000) ; si une fonction exportée « n'existe pas », relancer le serveur de dev ; gérer les dossiers (webkitGetAsEntry) dans tout glisser-déposer
+
+[2026-10-22] | Coupure réseau pendant une analyse : tous les chercheurs en « fetch failed », et pourtant conclusion « aucune irrégularité » ; débit mesuré sur /models (liste énorme) pris pour de la latence | Appels aux modèles retentés (fetchRetry) ; une analyse dont aucun chercheur n'aboutit passe en erreur ; mesurer la latence au premier octet sur un petit appel, pas sur un gros téléchargement
