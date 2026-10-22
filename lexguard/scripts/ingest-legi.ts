@@ -1,0 +1,118 @@
+// Corpus : extrait du dump DILA LEGI les articles (toutes versions) des codes utiles
+// aux collectivités, puis applique les incréments quotidiens pour être à jour.
+// Usage : npm run ingest:legi -- [chemin du dump .tar.gz] [nombre d'incréments]
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { CODES } from "../lib/codes";
+import { db } from "../lib/db";
+import { type ParsedArticle, parseArticle } from "../lib/dila";
+
+const DIR = join(process.cwd(), ".data", "dila");
+const BASE = "https://echanges.dila.gouv.fr/OPENDATA/LEGI/";
+
+function* walk(dir: string): Generator<string> {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) yield* walk(p);
+    else if (name.startsWith("LEGIARTI") && name.endsWith(".xml")) yield p;
+  }
+}
+
+function extract(archive: string, out: string) {
+  mkdirSync(out, { recursive: true });
+  const patterns = Object.keys(CODES).flatMap((id) => ["--include", `*code_en_vigueur*/${id}/article/*`]);
+  execFileSync("tar", ["-xzf", archive, "-C", out, ...patterns], { stdio: "inherit", maxBuffer: 1 << 26 });
+}
+
+async function insertBatch(batch: ParsedArticle[]) {
+  if (!batch.length) return;
+  const client = await db();
+  const values: unknown[] = [];
+  const rows = batch.map((a, i) => {
+    values.push(a.id, a.cid, a.text_id, CODES[a.text_id] ?? a.text_title, a.num, a.section, a.content, a.etat, a.date_debut, a.date_fin);
+    const o = i * 10;
+    return `($${o + 1}, $${o + 2}, $${o + 3}, $${o + 4}, $${o + 5}, $${o + 6}, $${o + 7}, $${o + 8}, $${o + 9}, $${o + 10})`;
+  });
+  await client.query(
+    `insert into articles (id, cid, code_id, code_title, num, section, text, etat, date_debut, date_fin) values ${rows.join(",")}
+     on conflict (id) do update set text = excluded.text, etat = excluded.etat, date_debut = excluded.date_debut, date_fin = excluded.date_fin, section = excluded.section`,
+    values,
+  );
+  const links = batch.flatMap((a) => a.liens.map((l) => [a.id, l.id, l.type, l.sens, l.num ? `${l.title}`.slice(0, 300) : l.title.slice(0, 300)]));
+  for (let i = 0; i < links.length; i += 400) {
+    const chunk = links.slice(i, i + 400);
+    const params = chunk.flat();
+    await client.query(
+      `insert into links (src, dst, type, sens, dst_title) values ${chunk.map((_, j) => `($${j * 5 + 1}, $${j * 5 + 2}, $${j * 5 + 3}, $${j * 5 + 4}, $${j * 5 + 5})`).join(",")}
+       on conflict do nothing`,
+      params,
+    );
+  }
+}
+
+async function load(dir: string, log: (m: string) => void) {
+  let batch: ParsedArticle[] = [];
+  let n = 0;
+  for (const path of walk(dir)) {
+    const a = parseArticle(readFileSync(path, "utf8"));
+    if (!a || !a.content || !CODES[a.text_id]) continue;
+    batch.push(a);
+    if (batch.length === 300) {
+      await insertBatch(batch);
+      n += batch.length;
+      batch = [];
+      if (n % 6000 === 0) log(`  ${n} articles…`);
+    }
+  }
+  await insertBatch(batch);
+  return n + batch.length;
+}
+
+async function main() {
+  const log = console.log;
+  const dump = process.argv[2] ?? join(DIR, "legi_global.tar.gz");
+  // « all » rejoue tous les incréments parus depuis le dump (le dump DILA date de juillet 2025).
+  const increments = process.argv[3] ?? "all";
+  const out = join(DIR, "legi_codes");
+  if (!existsSync(join(out, ".done"))) {
+    log(`Extraction des ${Object.keys(CODES).length} codes depuis ${dump}…`);
+    extract(dump, out);
+    writeFileSync(join(out, ".done"), new Date().toISOString());
+  }
+  log(`Chargement du corpus…`);
+  log(`${await load(out, log)} articles chargés depuis le dump`);
+
+  // Incréments quotidiens postérieurs au dump : le corpus colle au droit du jour.
+  const listing = await (await fetch(BASE)).text();
+  const dumpStamp = dump.match(/(\d{8}-\d{6})/)?.[1] ?? "20250713-140000";
+  const all = [...new Set([...listing.matchAll(/LEGI_\d{8}-\d{6}\.tar\.gz/g)].map((m) => m[0]))].sort().filter((f) => f.slice(5, 20) > dumpStamp);
+  const files = increments === "all" ? all : all.slice(-Number(increments));
+  log(`${files.length} incréments quotidiens à appliquer`);
+  // Téléchargement en parallèle (8 à la fois), application dans l'ordre chronologique.
+  mkdirSync(join(DIR, "legi_increments"), { recursive: true });
+  const queue = files.filter((f) => !existsSync(join(DIR, "legi_increments", f)));
+  await Promise.all(
+    Array.from({ length: 8 }, async () => {
+      for (let file = queue.shift(); file; file = queue.shift()) {
+        writeFileSync(join(DIR, "legi_increments", file), Buffer.from(await (await fetch(BASE + file)).arrayBuffer()));
+      }
+    }),
+  );
+  for (const file of files) {
+    const archive = join(DIR, "legi_increments", file);
+    const target = archive.replace(".tar.gz", "");
+    if (!existsSync(target)) extract(archive, target);
+    log(`${file} : ${await load(target, log)} articles mis à jour`);
+    await (await db()).query("insert into meta (key, value) values ('legi_a_jour_au', $1) on conflict (key) do update set value = excluded.value", [`${file.slice(5, 9)}-${file.slice(9, 11)}-${file.slice(11, 13)}`]);
+  }
+  const client = await db();
+  const { rows } = await client.query("select code_title, count(*) filter (where etat = 'VIGUEUR')::int en_vigueur, count(*)::int total from articles group by 1 order by 2 desc");
+  console.table(rows);
+  await client.close();
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

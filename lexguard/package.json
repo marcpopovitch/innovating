@@ -1,0 +1,45 @@
+{
+  "name": "lexguard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "ingest:legi": "tsx scripts/ingest-legi.ts",
+    "ingest:jo": "tsx scripts/ingest-jo.ts",
+    "ingest:actes": "tsx scripts/ingest-deliberations.ts",
+    "analyse": "tsx scripts/analyse.ts",
+    "bench": "tsx scripts/bench.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "sql": "tsx scripts/sql.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.1.0",
+    "@electric-sql/pglite": "^0.5.11",
+    "cobe": "^2.0.1",
+    "fast-xml-parser": "^5.11.2",
+    "lucide-react": "^1.61.0",
+    "motion": "^14.6.0",
+    "next": "16.4.2",
+    "pg": "^8.23.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/turbopack": "^4",
+    "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.2",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vitest": "^5.0.5"
+  }
+}
