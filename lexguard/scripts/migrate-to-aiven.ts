@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import { Pool } from "pg";
+import { pgConfig } from "../lib/db";
 
 // Tables à copier, avec leur clé de pagination (lecture par tranches, sans OFFSET).
 // Les colonnes générées (tsv) sont recalculées par Aiven, on ne les copie pas.
@@ -29,7 +30,7 @@ async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL (Aiven) manquante dans .env");
   const lite = await PGlite.create(join(process.cwd(), ".data", "pglite"), { extensions: { pg_trgm } });
-  const pool = new Pool({ connectionString: url, ssl: { rejectUnauthorized: false }, max: 4 });
+  const pool = new Pool({ ...pgConfig(url), max: 4 });
   await pool.query(readFileSync(join(process.cwd(), "db", "schema.sql"), "utf8"));
 
   for (const { name, key } of TABLES) {

@@ -12,11 +12,7 @@ export interface Db {
 async function connect(): Promise<Db> {
   if (process.env.DATABASE_URL) {
     const { Pool } = await import("pg");
-    const pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.DATABASE_URL.includes("sslmode=disable") ? false : { rejectUnauthorized: false },
-      max: 10,
-    });
+    const pool = new Pool({ ...pgConfig(process.env.DATABASE_URL), max: 10 });
     return {
       query: async (sql, params) => pool.query(sql, params as unknown[]) as never,
       exec: async (sql) => void (await pool.query(sql)),
@@ -55,6 +51,20 @@ function acquireLock(dir: string) {
       if (readFileSync(lock, "utf8") === String(process.pid)) unlinkSync(lock);
     } catch {}
   });
+}
+
+/**
+ * Aiven signe ses certificats avec sa propre autorité : on la fournit si DATABASE_CA_CERT pointe
+ * vers le ca.pem du service, sinon on chiffre sans vérifier la chaîne. Le paramètre sslmode de
+ * l'URL est retiré, car pg le traite comme « verify-full » et refuserait la connexion.
+ */
+export function pgConfig(url: string) {
+  const parsed = new URL(url);
+  const mode = parsed.searchParams.get("sslmode");
+  parsed.searchParams.delete("sslmode");
+  const caPath = process.env.DATABASE_CA_CERT;
+  const ssl = mode === "disable" ? false : caPath && existsSync(caPath) ? { ca: readFileSync(caPath, "utf8") } : { rejectUnauthorized: false };
+  return { connectionString: parsed.toString(), ssl };
 }
 
 // Un seul client par processus (Next.js recharge les modules en dev : on accroche à globalThis).
