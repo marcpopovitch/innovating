@@ -3,9 +3,8 @@
 // confirmer l'impact et de l'expliquer. Sans clé API, seul le rapprochement
 // déterministe (même article cité) est conservé.
 import { z } from "zod";
-import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { db, tracedQuery } from "../db";
-import { anthropic, CostMeter, FALLBACK, MODELS } from "./llm";
+import { CostMeter, hasLlmKey, MODELS, structured } from "./llm";
 
 interface JoText {
   id: string;
@@ -66,7 +65,7 @@ const ImpactSchema = z.object({
 export async function runVeille(days = 2, log: (m: string) => void = console.log) {
   const client = await db();
   const meter = new CostMeter();
-  const useLlm = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+  const useLlm = hasLlmKey();
   const { rows: texts } = await client.query<JoText>(
     `select id, title, nature, left(text, 6000) as text, modifies from jo_texts
       where nature in ('LOI', 'ORDONNANCE', 'DECRET', 'ARRETE') and date_publi >= (select max(date_publi) - $1::int from jo_texts)`,
@@ -78,16 +77,16 @@ export async function runVeille(days = 2, log: (m: string) => void = console.log
     if (!cands.length) continue;
     let confirmed = cands.filter((c) => c.reason.startsWith("cite aussi")).map((c) => ({ c, reason: `Le texte ${c.reason} : à vérifier.` }));
     if (useLlm) {
-      const res = await anthropic().beta.messages.parse({
-        model: MODELS.fast,
-        max_tokens: 4000,
-        output_config: { effort: "low", format: betaZodOutputFormat(ImpactSchema) },
-        ...FALLBACK,
-        system: "Tu fais la veille juridique d'une préfecture. Un texte vient de paraître au Journal officiel. Pour chaque acte local candidat, dis s'il doit être revu (il applique, cite ou contredit une règle que ce texte crée, modifie ou abroge). Sois strict : un simple sujet voisin ne suffit pas.",
-        messages: [{ role: "user", content: `Texte du JO : ${jo.title}\nArticles visés : ${jo.modifies.map((m) => m.title).slice(0, 15).join(" ; ")}\n${jo.text ?? ""}\n\nActes locaux candidats :\n${cands.map((c) => `#${c.id} [${c.collectivite}] ${c.title}\n${c.excerpt}`).join("\n\n")}` }],
-      });
-      meter.add(MODELS.fast, res.usage);
-      const parsed = res.parsed_output?.impacts ?? [];
+      const res = await structured(
+        meter,
+        MODELS.router,
+        "low",
+        "Tu fais la veille juridique d'une préfecture. Un texte vient de paraître au Journal officiel. Pour chaque acte local candidat, dis s'il doit être revu (il applique, cite ou contredit une règle que ce texte crée, modifie ou abroge). Sois strict : un simple sujet voisin ne suffit pas.",
+        `Texte du JO : ${jo.title}\nArticles visés : ${jo.modifies.map((m) => m.title).slice(0, 15).join(" ; ")}\n${jo.text ?? ""}\n\nActes locaux candidats :\n${cands.map((c) => `#${c.id} [${c.collectivite}] ${c.title}\n${c.excerpt}`).join("\n\n")}`,
+        ImpactSchema,
+        4000,
+      ).catch(() => null);
+      const parsed = res?.impacts ?? [];
       confirmed = parsed.filter((p) => p.impacted).flatMap((p) => {
         const c = cands.find((x) => x.id === p.act_id);
         return c ? [{ c, reason: p.reason }] : [];

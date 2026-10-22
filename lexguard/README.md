@@ -51,12 +51,13 @@ npm run data-layer > bench/data-layer.txt                   # livrable « data l
 npm run sql -- "select count(*) from articles"
 ```
 
-Variables d'environnement (à mettre dans `.env`) : `ANTHROPIC_API_KEY` (agents), `DATABASE_URL` (Aiven PostgreSQL ; sans elle, base PGlite locale dans `.data/pglite`).
+Variables d'environnement (à mettre dans `.env`) : `OPENAI_API_KEY` (modèles GPT, en direct), `OPENROUTER_API_KEY` (Claude, Mistral, Gemini — et GPT si pas de clé OpenAI) ou à défaut `ANTHROPIC_API_KEY` (Claude seulement) ; `DATABASE_URL` (Aiven PostgreSQL ; sans elle, base PGlite locale dans `.data/pglite`).
 
 PGlite n'accepte qu'un processus à la fois : arrêter `npm run dev` avant de lancer un script d'ingestion en local.
 
 ## Déploiement Aiven
 
-1. Créer un service **Aiven for PostgreSQL** et renseigner `DATABASE_URL`. Le schéma s'applique tout seul au premier démarrage.
-2. Charger les données depuis un poste : `DATABASE_URL=… npm run ingest:legi -- … all && npm run ingest:actes && npm run veille`.
+1. Créer un service **Aiven for PostgreSQL** (au moins 8 Go de disque : le corpus complet, jurisprudence comprise, pèse quelques Go) et mettre son *Service URI* dans `.env` comme `DATABASE_URL`.
+2. Arrêter `npm run dev`, puis copier la base locale vers Aiven : `npm run migrate:aiven`. Le schéma est créé tout seul.
+3. Relancer `npm run dev` : l'application lit désormais Aiven.
 3. Déployer le conteneur (`Dockerfile`, port 8080) sur **Aiven Runtime** avec `ANTHROPIC_API_KEY` et `DATABASE_URL`.

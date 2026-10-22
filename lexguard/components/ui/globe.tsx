@@ -38,6 +38,8 @@ interface GlobeProps {
   diffuse?: number;
   mapSamples?: number;
   scale?: number;
+  /** Arcs mis à jour à chaud (globe.update) au lieu de recréer le globe : pour les animations. */
+  liveArcs?: boolean;
 }
 
 const labelBase = {
@@ -77,6 +79,7 @@ export function Globe({
   diffuse = 1.4,
   mapSamples = 16000,
   scale = 1,
+  liveArcs = false,
 }: GlobeProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pointer = useRef<{ x: number; y: number } | null>(null);
@@ -86,6 +89,8 @@ export function Globe({
   const phiOffset = useRef(0);
   const thetaOffset = useRef(0);
   const paused = useRef(false);
+  // Arcs en attente d'envoi au globe (mode liveArcs).
+  const pendingArcs = useRef<GlobeArc[] | null>(null);
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     pointer.current = { x: e.clientX, y: e.clientY };
@@ -128,6 +133,10 @@ export function Globe({
       window.removeEventListener("pointerup", onPointerUp);
     };
   }, [onPointerMove, onPointerUp]);
+
+  useEffect(() => {
+    if (liveArcs) pendingArcs.current = arcs;
+  }, [arcs, liveArcs]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -179,9 +188,12 @@ export function Globe({
           if (thetaOffset.current < -0.4) thetaOffset.current += (-0.4 - thetaOffset.current) * 0.1;
           else if (thetaOffset.current > 0.4) thetaOffset.current += (0.4 - thetaOffset.current) * 0.1;
         }
+        const next = pendingArcs.current;
+        pendingArcs.current = null;
         globe!.update({
           phi: phi + phiOffset.current + drag.current.phi,
           theta: theta + thetaOffset.current + drag.current.theta,
+          ...(next ? { arcs: next.map((a) => ({ from: a.from, to: a.to, id: a.id })) } : {}),
         });
         frame = requestAnimationFrame(animate);
       };
@@ -207,7 +219,7 @@ export function Globe({
     };
     // Les props sont des constantes de démonstration : on recrée le globe si elles changent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [markers, arcs]);
+  }, [markers, liveArcs ? null : arcs]);
 
   return (
     <div className={`relative aspect-square select-none ${className}`}>

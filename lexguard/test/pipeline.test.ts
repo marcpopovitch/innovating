@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { beforeAll, describe, expect, it } from "vitest";
 
 process.env.PGLITE_DIR = "memory://";
+process.env.ANTHROPIC_API_KEY = "test"; // la vraie API est remplacée par le fetch simulé ci-dessous
 
 const RURAL = {
   id: "LEGIARTI000043000001",
@@ -25,9 +26,31 @@ function fakeApi(judgeReply: Judge) {
     const system = String(body.system ?? "");
     const last = body.messages.at(-1);
     let content: unknown[];
-    if (system.includes("découpes")) {
+    if (system.includes("prépares une recherche juridique")) {
+      calls.push("planificateur");
+      content = [{ type: "text", text: JSON.stringify({ angles: [{ angle: "Qui est compétent pour interdire les pesticides ?", pourquoi: "compétence" }] }) }];
+    } else if (system.includes("dresse l'état du droit")) {
+      calls.push("cartographe");
+      content = [{ type: "text", text: JSON.stringify({ headline: "La police des pesticides relève de l'État.", items: [
+        { kind: "existant", title: "Police spéciale des produits phytopharmaceutiques", explanation: "L'État décide.", citations: [{ article_id: RURAL.id, quote: judgeReply.quote }], suggestion: "Saisir le préfet." },
+        { kind: "existant", title: "Citation inventée", explanation: "…", citations: [{ article_id: RURAL.id, quote: "Le maire décide seul de tout en matière de pesticides" }], suggestion: "" },
+      ] }) }];
+    } else if (system.includes("découpes")) {
       calls.push("analyste");
       content = [{ type: "text", text: JSON.stringify({ autorite: "Le maire de Testville", dispositions: [{ text: "L'utilisation de produits phytopharmaceutiques est interdite sur le territoire communal.", objet: "interdiction des pesticides", mesure: "interdiction générale", autorite: "maire", perimetre: "territoire communal", references: ["CGCT L2212-2"] }] }) }];
+    } else if (system.includes("Tu es l'expert")) {
+      const level = system.match(/« ([^»]+) »/)?.[1] ?? "?";
+      const afterTool = Array.isArray(last.content) && last.content[0]?.type === "tool_result";
+      if (afterTool && JSON.stringify(last.content).includes("Dossier reçu")) {
+        calls.push(`expert:${level}:fin`);
+        content = [{ type: "text", text: "Terminé." }];
+      } else if (afterTool) {
+        calls.push(`expert:${level}:dossier`);
+        content = [{ type: "tool_use", id: "tu_e2", name: "submit_dossier", input: { candidates: [{ article_id: CGCT.id, why: "police générale", dispositions: ["d1"] }], notes: "" } }];
+      } else {
+        calls.push(`expert:${level}:recherche`);
+        content = [{ type: "tool_use", id: "tu_e1", name: "search_corpus", input: { query: "liberté" } }];
+      }
     } else if (system.includes("chercheur juridique")) {
       const afterTool = Array.isArray(last.content) && last.content[0]?.type === "tool_result";
       if (afterTool && JSON.stringify(last.content).includes("Dossier reçu")) {
@@ -69,10 +92,10 @@ beforeAll(async () => {
   }
 });
 
-async function run(judge: Judge) {
+async function run(judge: Judge, mode: "controle" | "exploration" = "controle") {
   const { client, calls } = fakeApi(judge);
   llm.setAnthropicClient(client);
-  const id = await mod.createAnalysis({ title: "Arrêté anti-pesticides", input: "Article 1 : l'utilisation de produits phytopharmaceutiques est interdite sur le territoire communal.", collectivite: "Testville", date_acte: "2026-10-01" });
+  const id = await mod.createAnalysis({ title: "Arrêté anti-pesticides", input: "Article 1 : l'utilisation de produits phytopharmaceutiques est interdite sur le territoire communal.", collectivite: "Testville", date_acte: "2026-10-01", mode, cadrage: { domaine: "Environnement et pesticides", periode: "Droit en vigueur aujourd'hui" } });
   await mod.runAnalysis(id);
   const c = await dbmod.db();
   const findings = (await c.query<{ verdict: string; verified: boolean; rejection_reason: string | null; citations: Array<{ url: string }> }>("select verdict, verified, rejection_reason, citations from findings where analysis_id = $1", [id])).rows;
@@ -85,7 +108,13 @@ async function run(judge: Judge) {
 describe("équipe d'agents", () => {
   it("enchaîne analyste → chercheur (plusieurs étapes) → juge → contradicteur → rédacteur et garde une alerte vérifiée", async () => {
     const r = await run({ quote: "prendre toute mesure d'interdiction, de restriction ou de prescription particulière concernant", keep: true });
-    expect(r.calls).toEqual(["analyste", "chercheur:recherche", "chercheur:dossier", "chercheur:fin", "juge", "contradicteur", "redacteur"]);
+    // Chercheur des codes et 3 experts de niveau travaillent en parallèle, puis juge → contradicteur → rédacteur.
+    expect(r.calls[0]).toBe("analyste");
+    expect(r.calls.slice(-3)).toEqual(["juge", "contradicteur", "redacteur"]);
+    expect(r.calls.filter((c) => c.startsWith("chercheur:"))).toEqual(["chercheur:recherche", "chercheur:dossier", "chercheur:fin"]);
+    expect(new Set(r.calls.filter((c) => c.endsWith(":dossier") && c.startsWith("expert:")))).toEqual(
+      new Set(["expert:Bloc de constitutionnalité:dossier", "expert:Droit international et de l'UE:dossier", "expert:Jurisprudence administrative:dossier"]),
+    );
     expect(r.findings).toHaveLength(1);
     expect(r.findings[0]).toMatchObject({ verdict: "incompetence", verified: true, rejection_reason: null });
     expect(r.findings[0].citations[0].url).toBe(`https://www.legifrance.gouv.fr/codes/article_lc/${RURAL.id}`);
@@ -101,5 +130,13 @@ describe("équipe d'agents", () => {
     expect(r.findings[0].verified).toBe(false);
     expect(r.findings[0].rejection_reason).toMatch(/ne figure pas/);
     expect(r.events.some((e) => e.agent === "contradicteur" && e.type === "rejet")).toBe(true);
+  });
+
+  it("mode exploration : planificateur → chercheur → cartographe, citations inventées écartées", async () => {
+    const r = await run({ quote: "prendre toute mesure d'interdiction, de restriction ou de prescription particulière concernant", keep: true }, "exploration");
+    expect(r.calls).toEqual(["planificateur", "chercheur:recherche", "chercheur:dossier", "chercheur:fin", "cartographe"]);
+    expect(r.findings.map((f) => [f.verdict, f.verified])).toEqual([["existant", true], ["existant", false]]);
+    expect(r.analysis.status).toBe("termine");
+    expect(r.analysis.summary.counts.existant).toBe(1);
   });
 });

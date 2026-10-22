@@ -1,5 +1,8 @@
 // Petit client SQL pour inspecter la base locale ou Aiven : npm run sql -- "select …"
+import { existsSync } from "node:fs";
 import { db } from "../lib/db";
+
+if (existsSync(".env")) process.loadEnvFile(".env");
 
 async function main() {
   const client = await db();

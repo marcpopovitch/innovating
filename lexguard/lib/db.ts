@@ -1,6 +1,6 @@
 // Une seule interface SQL : Aiven PostgreSQL si DATABASE_URL est défini,
 // sinon PGlite (Postgres embarqué, fichier local) pour développer sans rien installer.
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export interface Db {
@@ -12,11 +12,7 @@ export interface Db {
 async function connect(): Promise<Db> {
   if (process.env.DATABASE_URL) {
     const { Pool } = await import("pg");
-    const pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.DATABASE_URL.includes("sslmode=disable") ? false : { rejectUnauthorized: false },
-      max: 10,
-    });
+    const pool = new Pool({ ...pgConfig(process.env.DATABASE_URL), max: 10 });
     return {
       query: async (sql, params) => pool.query(sql, params as unknown[]) as never,
       exec: async (sql) => void (await pool.query(sql)),
@@ -57,15 +53,34 @@ function acquireLock(dir: string) {
   });
 }
 
-// Un seul client par processus (Next.js recharge les modules en dev : on accroche à globalThis).
-const globalDb = globalThis as unknown as { __lexguardDb?: Promise<Db> };
+/**
+ * Aiven signe ses certificats avec sa propre autorité : on la fournit si DATABASE_CA_CERT pointe
+ * vers le ca.pem du service, sinon on chiffre sans vérifier la chaîne. Le paramètre sslmode de
+ * l'URL est retiré, car pg le traite comme « verify-full » et refuserait la connexion.
+ */
+export function pgConfig(url: string) {
+  const parsed = new URL(url);
+  const mode = parsed.searchParams.get("sslmode");
+  parsed.searchParams.delete("sslmode");
+  const caPath = process.env.DATABASE_CA_CERT;
+  const ssl = mode === "disable" ? false : caPath && existsSync(caPath) ? { ca: readFileSync(caPath, "utf8") } : { rejectUnauthorized: false };
+  return { connectionString: parsed.toString(), ssl };
+}
 
-export function db(): Promise<Db> {
-  globalDb.__lexguardDb ??= connect().then(async (client) => {
-    await client.exec(readFileSync(join(process.cwd(), "db", "schema.sql"), "utf8"));
-    return client;
-  });
-  return globalDb.__lexguardDb;
+// Un seul client par processus (Next.js recharge les modules en dev : on accroche à globalThis).
+// Le schéma (idempotent) est réappliqué dès que db/schema.sql change, sans redémarrer le serveur.
+const globalDb = globalThis as unknown as { __lexguardDb?: Promise<Db>; __lexguardSchema?: number };
+const SCHEMA = () => join(process.cwd(), "db", "schema.sql");
+
+export async function db(): Promise<Db> {
+  globalDb.__lexguardDb ??= connect();
+  const client = await globalDb.__lexguardDb;
+  const mtime = statSync(SCHEMA()).mtimeMs;
+  if (globalDb.__lexguardSchema !== mtime) {
+    globalDb.__lexguardSchema = mtime;
+    await client.exec(readFileSync(SCHEMA(), "utf8"));
+  }
+  return client;
 }
 
 /** Exécute une requête et la trace dans query_log (livrable « data layer in action »). */

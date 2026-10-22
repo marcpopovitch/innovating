@@ -1,6 +1,45 @@
 // Contrat partagé entre les agents, l'API et l'interface.
 
-export type Verdict = "conflit" | "doublon" | "vide" | "incompetence" | "conforme";
+export type Verdict = "conflit" | "doublon" | "vide" | "incompetence" | "conforme" | "existant";
+
+/**
+ * Deux usages distincts :
+ * - controle : un texte presque prêt, on cherche les conflits avec le droit existant ;
+ * - exploration : une idée encore floue, on cartographie ce qui existe déjà.
+ */
+export type Mode = "controle" | "exploration";
+
+/**
+ * Modèles proposés dans l'interface pour le jugement. Choix produit : derrière, tout passe par
+ * OpenAI (OPENAI_API_KEY) avec le modèle OpenAI de même gamme (`backend`). Jev n'est pas un choix :
+ * il est branché d'office sur les étapes de langage (voir MODELS.router dans lib/agents/llm.ts).
+ * Prix affichés = prix publics du modèle nommé, $ / M tokens.
+ */
+export const MODEL_CHOICES = [
+  { id: "gpt-6-luna", label: "GPT-6 Luna", provider: "openai", openrouter: "openai/gpt-6-luna", backend: "gpt-6-luna", price: [0.1, 0.5], hint: "Recommandé · le moins cher" },
+  { id: "claude-haiku-5-5", label: "Claude Haiku 5.5", provider: "anthropic", openrouter: "anthropic/claude-haiku-5.5", backend: "gpt-6-luna", price: [0.1, 0.5], hint: "Rapide et économique" },
+  { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", provider: "anthropic", openrouter: "anthropic/claude-sonnet-5.5", backend: "gpt-6-sol", price: [2, 10], hint: "Plus rigoureux" },
+  { id: "mistral-large-4", label: "Mistral Large 4", provider: "mistral", openrouter: "mistralai/mistral-large-4-0", backend: "gpt-6-sol", price: [1.36, 4.18], hint: "Modèle français" },
+  { id: "gemini-3-8-flash", label: "Gemini 3.8 Flash", provider: "google", openrouter: "google/gemini-3.8-flash", backend: "gpt-6-luna", price: [0.825, 4.125], hint: "Rapide" },
+] as const;
+export type ModelId = (typeof MODEL_CHOICES)[number]["id"];
+
+/** Question de cadrage posée AVANT de lancer les agents. */
+export interface CadrageQuestion {
+  id: string; // domaine | periode | perimetre | … (ou une question propre à la demande)
+  question: string;
+  options: string[]; // réponses proposées en puces
+  allow_free: boolean; // l'utilisateur peut écrire sa propre réponse
+  default: string | null;
+}
+
+/** POST /api/cadrage { prompt } → CadrageResponse */
+export interface CadrageResponse {
+  mode: Mode;
+  title: string; // titre court de la conversation
+  reformulation: string; // ce que l'IA a compris, en une phrase
+  questions: CadrageQuestion[];
+}
 export type Severity = "critique" | "majeure" | "mineure" | "info";
 export type AgentName = "orchestrateur" | "analyste" | "chercheur" | "juge" | "contradicteur" | "redacteur" | "veilleur" | "impact";
 
@@ -47,6 +86,9 @@ export interface AnalysisSummary {
 export interface Analysis {
   id: string;
   kind: "acte" | "jo";
+  mode: Mode;
+  model: ModelId;
+  cadrage: Record<string, string> | null; // réponses aux questions de cadrage
   title: string;
   input: string;
   collectivite: string | null;
@@ -96,7 +138,9 @@ export interface VeilleItem {
 }
 
 // API :
-// POST /api/analyses  { title, input, collectivite?, date_acte? } → { id }
+// POST /api/cadrage   { prompt } → CadrageResponse (fonctionne aussi sans clé : questions par défaut)
+// POST /api/analyses  { title, input, mode, model, cadrage, collectivite?, date_acte? } → { id }
+// GET  /api/analyses  → { analyses: Analysis[] } (les conversations, plus récentes d'abord)
 // GET  /api/analyses/[id] → { analysis: Analysis, findings: Finding[] }
 // GET  /api/analyses/[id]/stream → SSE d'AgentEvent, se termine sur type "fin"
 // POST /api/feedback  { finding_id, decision: "valide" | "rejete", reason? } → { ok: true }
