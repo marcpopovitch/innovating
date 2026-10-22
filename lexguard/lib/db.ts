@@ -1,6 +1,6 @@
 // Une seule interface SQL : Aiven PostgreSQL si DATABASE_URL est défini,
 // sinon PGlite (Postgres embarqué, fichier local) pour développer sans rien installer.
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export interface Db {
@@ -58,14 +58,19 @@ function acquireLock(dir: string) {
 }
 
 // Un seul client par processus (Next.js recharge les modules en dev : on accroche à globalThis).
-const globalDb = globalThis as unknown as { __lexguardDb?: Promise<Db> };
+// Le schéma (idempotent) est réappliqué dès que db/schema.sql change, sans redémarrer le serveur.
+const globalDb = globalThis as unknown as { __lexguardDb?: Promise<Db>; __lexguardSchema?: number };
+const SCHEMA = () => join(process.cwd(), "db", "schema.sql");
 
-export function db(): Promise<Db> {
-  globalDb.__lexguardDb ??= connect().then(async (client) => {
-    await client.exec(readFileSync(join(process.cwd(), "db", "schema.sql"), "utf8"));
-    return client;
-  });
-  return globalDb.__lexguardDb;
+export async function db(): Promise<Db> {
+  globalDb.__lexguardDb ??= connect();
+  const client = await globalDb.__lexguardDb;
+  const mtime = statSync(SCHEMA()).mtimeMs;
+  if (globalDb.__lexguardSchema !== mtime) {
+    globalDb.__lexguardSchema = mtime;
+    await client.exec(readFileSync(SCHEMA(), "utf8"));
+  }
+  return client;
 }
 
 /** Exécute une requête et la trace dans query_log (livrable « data layer in action »). */
