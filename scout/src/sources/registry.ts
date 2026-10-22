@@ -32,13 +32,14 @@ export interface CompanyRecord {
   categorie_entreprise: string | null;
   activite_principale: string | null;
   etat_administratif: string;
-  siege: { adresse: string; libelle_commune: string | null };
+  siege: { adresse: string; libelle_commune: string | null; code_postal?: string | null };
   dirigeants: Dirigeant[];
   finances: Record<string, { ca: number | null; resultat_net: number | null }> | null;
 }
 
-export async function searchCompanies(query: string, limit = 5): Promise<CompanyRecord[]> {
-  const url = `${RECHERCHE}?q=${encodeURIComponent(query)}&per_page=${limit}`;
+export async function searchCompanies(query: string, limit = 5, filters: Record<string, string> = {}): Promise<CompanyRecord[]> {
+  const params = new URLSearchParams({ q: query, per_page: String(limit), ...filters });
+  const url = `${RECHERCHE}?${params}`;
   const { results } = await getJson<{ results: CompanyRecord[] }>(url);
   return results;
 }
