@@ -13,7 +13,7 @@ puis discuter avec l'analyste et exporter un mémo sourcé.
 ## Démarrage en 5 commandes
 
 ```bash
-git clone https://github.com/boris94300/vc-analyst.git && cd vc-analyst
+git clone https://github.com/marcpopovitch/innovating.git && cd innovating
 python -m venv .venv && source .venv/bin/activate     # Windows : .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env                                   # puis remplir les clés dans .env
