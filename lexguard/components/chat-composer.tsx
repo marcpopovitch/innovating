@@ -3,7 +3,7 @@
 // La zone de prompt : grande boîte arrondie, « + » pour joindre un texte, sélecteur de
 // modèle (logos en dégradé rouge), micro (bientôt), bouton envoyer rouge dès qu'il y a du texte.
 // Le mode (contrôle / exploration) se choisit ensuite, dans le message de cadrage.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ModelBadge, ModelIcon } from "@/components/model-icons";
 import { MODEL_CHOICES, type Mode, type ModelId } from "@/lib/types";
 
@@ -229,15 +229,41 @@ function ModelButton({ model, open, onToggle }: { model: ModelId; open: boolean;
 
 function ModelMenu({ model, onPick, onClose }: { model: ModelId; onPick: (id: ModelId) => void; onClose: () => void }) {
   const listRef = useRef<HTMLUListElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(() => Math.max(0, MODEL_CHOICES.findIndex((m) => m.id === model)));
+  // Le menu s'ouvre du côté où il y a le plus de place et se limite à cet espace (la liste défile).
+  const [place, setPlace] = useState<{ up: boolean; max: number }>({ up: true, max: 420 });
 
-  useEffect(() => {
-    listRef.current?.focus();
+  useLayoutEffect(() => {
+    const anchor = rootRef.current?.parentElement;
+    if (!anchor) return;
+    const compute = () => {
+      const r = anchor.getBoundingClientRect();
+      const above = r.top - 80; // laisse la place de l'en-tête
+      const below = window.innerHeight - r.bottom - 16;
+      const up = above >= Math.min(420, below) || above >= below;
+      setPlace({ up, max: Math.max(180, Math.floor((up ? above : below) - 12)) });
+    };
+    compute();
+    window.addEventListener("resize", compute);
+    return () => window.removeEventListener("resize", compute);
   }, []);
 
+  useEffect(() => {
+    listRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  useEffect(() => {
+    document.getElementById(`model-opt-${MODEL_CHOICES[active].id}`)?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+
   return (
-    <div className="absolute bottom-full left-0 z-30 mb-3 w-full max-w-[380px] rounded-[18px] border border-line bg-white p-2 shadow-[var(--shadow-lg)]">
-      <p className="px-3 pt-2 pb-2 fl-eyebrow">Modèle de jugement</p>
+    <div
+      ref={rootRef}
+      style={{ maxHeight: place.max }}
+      className={`absolute left-0 z-30 flex w-full max-w-[380px] flex-col rounded-[18px] border border-line bg-white p-2 shadow-[var(--shadow-lg)] ${place.up ? "bottom-full mb-3" : "top-full mt-3"}`}
+    >
+      <p className="shrink-0 px-3 pt-2 pb-2 fl-eyebrow">Modèle de jugement</p>
       <ul
         ref={listRef}
         role="listbox"
@@ -259,7 +285,7 @@ function ModelMenu({ model, onPick, onClose }: { model: ModelId; onPick: (id: Mo
             onClose();
           }
         }}
-        className="outline-none"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain outline-none"
       >
         {MODEL_CHOICES.map((choice, i) => {
           const selected = choice.id === model;
@@ -280,7 +306,7 @@ function ModelMenu({ model, onPick, onClose }: { model: ModelId; onPick: (id: Mo
                   {i === 0 && <span className="rounded-full bg-gradient-to-r from-[#ff2e2e] to-[#ff7a2e] px-2 py-0.5 text-[10.5px] font-semibold text-white">Recommandé</span>}
                 </span>
                 <span className="block truncate text-[12px] text-muted">
-                  {choice.hint.replace(/^Recommandé · /, "")} · {fmtPrice(choice.price[0])} $ / {fmtPrice(choice.price[1])} $ par M tokens
+                  {choice.hint.replace(/^Recommandé · /, "")} · {choice.price[0] === 0 ? "prix du modèle choisi par le routeur" : `${fmtPrice(choice.price[0])} $ / ${fmtPrice(choice.price[1])} $ par M tokens`}
                 </span>
               </span>
               {selected && (
@@ -292,7 +318,7 @@ function ModelMenu({ model, onPick, onClose }: { model: ModelId; onPick: (id: Mo
           );
         })}
       </ul>
-      <p className="mt-1 border-t border-line px-3 pt-2.5 pb-1.5 text-[11.5px] leading-snug text-muted">
+      <p className="mt-1 shrink-0 border-t border-line px-3 pt-2.5 pb-1.5 text-[11.5px] leading-snug text-muted">
         Les recherches tournent toujours sur Claude Haiku 5.5 ; ce modèle rend le jugement final.
       </p>
     </div>

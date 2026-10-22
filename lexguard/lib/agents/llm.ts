@@ -13,8 +13,8 @@ import { MODEL_CHOICES } from "../types";
 // Sous-agents (chercheurs, experts, analyste) : le modèle le moins cher qui tient
 // l'usage d'outils. Le modèle choisi dans l'interface fait le jugement.
 const DEFAULT_MODELS = {
-  fast: process.env.LEXGUARD_FAST_MODEL ?? "claude-haiku-5-5",
-  deep: process.env.LEXGUARD_DEEP_MODEL ?? "claude-haiku-5-5",
+  fast: process.env.LEXGUARD_FAST_MODEL ?? "gpt-6-luna",
+  deep: process.env.LEXGUARD_DEEP_MODEL ?? "jev",
 };
 
 // Le modèle choisi vaut pour toute une analyse, y compris ses sous-agents parallèles.
@@ -40,20 +40,25 @@ export const hasLlmKey = () => Object.values(env()).some(Boolean);
 
 const choice = (id: string) => MODEL_CHOICES.find((m) => m.id === id);
 
+// Prix réels des modèles OpenAI exécutés derrière les choix de l'interface ($ / M tokens).
+const BACKEND_PRICES: Record<string, [number, number]> = { "gpt-6-luna": [0.1, 0.5], "gpt-6-sol": [2, 10] };
+
 type Route = { kind: "openai" | "openrouter" | "anthropic"; model: string; priceId: string };
 /**
- * Choisit le fournisseur d'un modèle selon les clés présentes : GPT passe par OpenAI si sa clé
- * existe, tout le reste par OpenRouter, sinon Claude par Anthropic. Un modèle injoignable
- * retombe sur un modèle disponible (GPT-6 Luna avec la seule clé OpenAI).
+ * Choix produit : Jev passe par OpenRouter ; tout autre choix est exécuté par OpenAI avec le
+ * modèle de même gamme (MODEL_CHOICES.backend). Sans clé OpenAI, repli sur OpenRouter puis
+ * sur Anthropic pour garder l'application utilisable.
  */
 function route(id: string): Route {
   const e = env();
   const c = choice(id);
-  if (c?.provider === "openai" && e.openai) return { kind: "openai", model: c.openrouter.replace(/^openai\//, ""), priceId: id };
+  if (id === "jev" && e.openrouter) return { kind: "openrouter", model: "typesafe/jev-router", priceId: "jev" };
+  if (e.openai) {
+    const backend = c && c.backend !== "jev" ? c.backend : "gpt-6-luna";
+    return { kind: "openai", model: backend, priceId: backend };
+  }
   if (e.openrouter) return { kind: "openrouter", model: c?.openrouter ?? id, priceId: id };
-  if (e.anthropic && (c?.provider === "anthropic" || id.startsWith("claude-"))) return { kind: "anthropic", model: id, priceId: id };
-  if (e.openai) return { kind: "openai", model: "gpt-6-luna", priceId: "gpt-6-luna" };
-  if (e.anthropic) return { kind: "anthropic", model: "claude-sonnet-5-5", priceId: "claude-sonnet-5-5" };
+  if (e.anthropic) return { kind: "anthropic", model: c?.provider === "anthropic" ? c.id : "claude-sonnet-5-5", priceId: c?.provider === "anthropic" ? c.id : "claude-sonnet-5-5" };
   throw new Error("Aucune clé de modèle (OPENAI_API_KEY, OPENROUTER_API_KEY ou ANTHROPIC_API_KEY).");
 }
 
@@ -73,11 +78,16 @@ export function setAnthropicClient(c: Anthropic) {
 export class CostMeter {
   usd = 0;
   calls = 0;
-  add(model: string, usage: { input_tokens?: number | null; output_tokens?: number | null; cache_read_input_tokens?: number | null } | undefined) {
+  add(model: string, usage: { input_tokens?: number | null; output_tokens?: number | null; cache_read_input_tokens?: number | null; cost?: number | null } | undefined) {
     if (!usage) return;
-    const [inp, out] = choice(model)?.price ?? (model.includes("opus") ? [4, 20] : model.includes("sonnet") ? [2, 10] : [0.1, 0.5]);
-    this.usd += ((usage.input_tokens ?? 0) * inp + (usage.cache_read_input_tokens ?? 0) * inp * 0.1 + (usage.output_tokens ?? 0) * out) / 1e6;
     this.calls += 1;
+    // OpenRouter facture certains modèles au prix réel du modèle routé : il le renvoie dans usage.cost.
+    if (typeof usage.cost === "number") {
+      this.usd += usage.cost;
+      return;
+    }
+    const [inp, out] = BACKEND_PRICES[model] ?? choice(model)?.price ?? (model.includes("opus") ? [4, 20] : model.includes("sonnet") ? [2, 10] : [0.1, 0.5]);
+    this.usd += ((usage.input_tokens ?? 0) * inp + (usage.cache_read_input_tokens ?? 0) * inp * 0.1 + (usage.output_tokens ?? 0) * out) / 1e6;
   }
 }
 
@@ -98,7 +108,7 @@ async function chatCompletions(r: Route, body: Record<string, unknown>) {
   const { max_tokens, reasoning, ...rest } = body as { max_tokens?: number; reasoning?: { effort: string } } & Record<string, unknown>;
   const payload = openai
     ? { ...rest, model: r.model, max_completion_tokens: max_tokens, reasoning_effort: reasoning?.effort }
-    : { ...rest, model: r.model, max_tokens, reasoning };
+    : { ...rest, model: r.model, max_tokens, reasoning, usage: { include: true } };
   const res = await fetch(openai ? "https://api.openai.com/v1/chat/completions" : "https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -112,10 +122,10 @@ async function chatCompletions(r: Route, body: Record<string, unknown>) {
   if (!res.ok) throw new Error(`${openai ? "OpenAI" : "OpenRouter"} ${res.status} : ${(await res.text()).slice(0, 300)}`);
   return (await res.json()) as {
     choices: Array<{ message: ORMessage; finish_reason: string }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
+    usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
   };
 }
-const orUsage = (u?: { prompt_tokens?: number; completion_tokens?: number }) => ({ input_tokens: u?.prompt_tokens ?? 0, output_tokens: u?.completion_tokens ?? 0 });
+const orUsage = (u?: { prompt_tokens?: number; completion_tokens?: number; cost?: number }) => ({ input_tokens: u?.prompt_tokens ?? 0, output_tokens: u?.completion_tokens ?? 0, cost: u?.cost ?? null });
 
 // ---------- Interface commune ----------
 

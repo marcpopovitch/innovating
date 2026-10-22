@@ -83,7 +83,7 @@ function ChatView() {
   const [sentPrompt, setSentPrompt] = useState("");
   const [attachment, setAttachment] = useState("");
   const [sentAttachment, setSentAttachment] = useState("");
-  const [model, setModel] = useState<ModelId>("claude-haiku-5-5");
+  const [model, setModel] = useState<ModelId>("jev");
   const [mode, setMode] = useState<Mode>("controle");
   const [cadrage, setCadrage] = useState<CadrageResponse | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
