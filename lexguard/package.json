@@ -18,7 +18,8 @@
     "veille": "tsx scripts/veille.ts",
     "data-layer": "tsx scripts/data-layer.ts",
     "ingest:hierarchie": "tsx scripts/ingest-hierarchy.ts",
-    "migrate:aiven": "tsx scripts/migrate-to-aiven.ts"
+    "migrate:aiven": "tsx scripts/migrate-to-aiven.ts",
+    "demo:learning": "tsx scripts/demo-learning.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.1.0",
