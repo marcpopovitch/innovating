@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VC Analyst</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand">[NOM] <span>analyste IA pour associates VC</span></div>
+    <nav>
+      <button id="tab-explorer" class="tab active">Explorer</button>
+      <button id="tab-analyst" class="tab" disabled>Analyste</button>
+    </nav>
+  </header>
+
+  <!-- Vue 1 : Explorer -->
+  <main id="view-explorer">
+    <div class="toolbar">
+      <select id="region"><option value="">Toutes les régions</option></select>
+      <input id="search" type="search" placeholder="Rechercher une startup, un secteur…">
+      <form id="resolve-form" class="resolve">
+        <input id="resolve-url" placeholder="…ou coller une URL / un LinkedIn de founder">
+        <button type="submit">Analyser</button>
+      </form>
+    </div>
+    <p id="count" class="muted"></p>
+    <div id="treemap"></div>
+  </main>
+
+  <!-- Vue 2 : Analyste -->
+  <main id="view-analyst" hidden>
+    <section class="head">
+      <div>
+        <h1 id="s-name"></h1>
+        <p id="s-meta" class="muted"></p>
+        <p id="s-desc"></p>
+      </div>
+      <div class="actions">
+        <button id="btn-refresh">Rafraîchir l'analyse</button>
+        <a id="memo-md" class="btn ghost" target="_blank">Mémo .md</a>
+        <a id="memo-html" class="btn ghost" target="_blank">Mémo HTML</a>
+      </div>
+    </section>
+    <p id="status" class="status" hidden></p>
+    <div class="layout">
+      <section id="pods" class="pods"></section>
+      <aside class="chat">
+        <h2>Chat</h2>
+        <div id="messages"></div>
+        <form id="chat-form">
+          <input id="chat-input" placeholder="Question sur la startup ou son secteur…" autocomplete="off">
+          <button type="submit">Envoyer</button>
+        </form>
+      </aside>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

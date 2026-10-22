@@ -1,0 +1,17 @@
+[
+  {"id": "mistral-founders", "startup_id": "sample-mistral-ai", "question": "Who are the co-founders of Mistral AI?", "expected_all": ["Mensch", "Lample", "Lacroix"]},
+  {"id": "qonto-founders", "startup_id": "sample-qonto", "question": "Qui sont les cofondateurs de Qonto ?", "expected_all": ["Prot", "Anavi"]},
+  {"id": "alan-founders", "startup_id": "sample-alan", "question": "Who founded Alan, the French health insurance company?", "expected_all": ["Samuelian", "Gorintin"]},
+  {"id": "hf-ceo", "startup_id": "sample-hugging-face", "question": "Qui est le CEO de Hugging Face ?", "expected_any": ["Delangue"]},
+  {"id": "deepl-ceo", "startup_id": "sample-deepl", "question": "Who is the founder and CEO of DeepL?", "expected_any": ["Kutylowski"]},
+  {"id": "synthesia-ceo", "startup_id": "sample-synthesia", "question": "Who is the CEO of Synthesia?", "expected_any": ["Riparbelli"]},
+  {"id": "doctolib-year", "startup_id": "sample-doctolib", "question": "En quelle année Doctolib a-t-elle été fondée ?", "expected_any": ["2013"]},
+  {"id": "pigment-founders", "startup_id": "sample-pigment", "question": "Who are Pigment's co-founders?", "expected_all": ["Crespo", "Niccoli"]},
+  {"id": "vercel-framework", "startup_id": "sample-vercel", "question": "Which popular open-source web framework does Vercel create and maintain?", "expected_any": ["Next.js", "NextJS"]},
+  {"id": "linear-founders", "startup_id": "sample-linear", "question": "Who are the co-founders of Linear?", "expected_all": ["Saarinen", "Artman"]},
+  {"id": "ramp-founders", "startup_id": "sample-ramp", "question": "Qui sont les cofondateurs de Ramp ?", "expected_all": ["Glyman", "Atiyeh"]},
+  {"id": "backmarket-product", "startup_id": "sample-back-market", "question": "What kind of products does Back Market sell?", "expected_any": ["refurbished", "reconditionn"]},
+  {"id": "pennylane-q3", "startup_id": "sample-pennylane", "question": "What was Pennylane's exact net revenue in Q3 2026, in euros?", "expected": "UNKNOWN", "note": "Chiffre non public : la bonne réponse est de dire qu'on ne sait pas."},
+  {"id": "celonis-churn", "startup_id": "sample-celonis", "question": "What exact churn rate did Celonis report for its enterprise customers in 2025?", "expected": "UNKNOWN", "note": "Donnée non publiée."},
+  {"id": "photoroom-codename", "startup_id": "sample-photoroom", "question": "Quel est le nom de code interne de la roadmap produit 2027 de Photoroom ?", "expected": "UNKNOWN", "note": "Information interne, introuvable."}
+]

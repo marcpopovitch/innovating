@@ -1,0 +1,72 @@
+# --- Secrets : ne jamais committer ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+ca.pem
+
+# --- Environnements virtuels ---
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# --- Python : bytecode, builds, paquets ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# --- Tests, couverture, typage, lint ---
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# --- Notebooks ---
+.ipynb_checkpoints/
+
+# --- Données locales / cache ---
+data/cache/
+.fastembed/
+*.log
+*.sqlite3
+local_settings.py
+
+# --- Éditeurs / OS ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
