@@ -176,9 +176,53 @@ export interface ToolLoopOptions {
   isDone: () => boolean; // l'agent a rendu son travail (ex. submit_dossier accepté)
 }
 
+/** Exécute un appel d'outil demandé par le modèle ; l'erreur est renvoyée au modèle, pas levée. */
+async function runTool(o: ToolLoopOptions, name: string, args: string): Promise<string> {
+  try {
+    const tool = o.tools.find((t) => t.name === name);
+    if (!tool) throw new Error(`Outil inconnu : ${name}`);
+    const input = tool.parse(JSON.parse(args || "{}"));
+    if (tool.name !== "submit_dossier") o.onToolUse?.(tool.name, input);
+    const out = await tool.run(input);
+    return typeof out === "string" ? out : JSON.stringify(out);
+  } catch (error) {
+    return `Erreur : ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+type ResponseItem = { type: string; call_id?: string; name?: string; arguments?: string } & Record<string, unknown>;
+
+/**
+ * OpenAI refuse outils + raisonnement sur /v1/chat/completions : les agents à outils passent
+ * par /v1/responses, en renvoyant à chaque tour les éléments produits (raisonnement compris).
+ */
+async function responsesLoop(meter: CostMeter, r: Route, o: ToolLoopOptions): Promise<void> {
+  const input: ResponseItem[] = [{ type: "message", role: "user", content: o.user }];
+  const tools = o.tools.map((t) => {
+    const def = t as unknown as { name: string; description?: string; input_schema: unknown };
+    return { type: "function", name: def.name, description: def.description, parameters: def.input_schema, strict: false };
+  });
+  for (let i = 0; i < o.maxIterations && !o.isDone(); i++) {
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: r.model, instructions: o.system, input, tools, reasoning: { effort: o.effort ?? "medium" }, max_output_tokens: 16000, store: false, include: ["reasoning.encrypted_content"] }),
+      signal: AbortSignal.timeout(300_000),
+    });
+    if (!res.ok) throw new Error(`OpenAI ${res.status} : ${(await res.text()).slice(0, 300)}`);
+    const out = (await res.json()) as { output: ResponseItem[]; usage?: { input_tokens?: number; output_tokens?: number } };
+    meter.add(r.priceId, out.usage);
+    input.push(...out.output);
+    const calls = out.output.filter((x) => x.type === "function_call");
+    if (!calls.length) break;
+    for (const call of calls) input.push({ type: "function_call_output", call_id: call.call_id, output: await runTool(o, call.name ?? "", call.arguments ?? "") });
+  }
+}
+
 /** Agent à outils : boucle appel → outils → appel, jusqu'à isDone() ou la limite d'itérations. */
 export async function toolLoop(meter: CostMeter, model: string, o: ToolLoopOptions): Promise<void> {
   const r = route(model);
+  if (r.kind === "openai") return responsesLoop(meter, r, o);
   if (r.kind !== "anthropic") {
     const messages: ORMessage[] = [
       { role: "system", content: o.system },
@@ -196,18 +240,7 @@ export async function toolLoop(meter: CostMeter, model: string, o: ToolLoopOptio
       messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: msg.tool_calls });
       if (!msg.tool_calls?.length) break;
       for (const call of msg.tool_calls) {
-        const tool = o.tools.find((t) => t.name === call.function.name);
-        let content: string;
-        try {
-          if (!tool) throw new Error(`Outil inconnu : ${call.function.name}`);
-          const input = tool.parse(JSON.parse(call.function.arguments || "{}"));
-          if (tool.name !== "submit_dossier") o.onToolUse?.(tool.name, input);
-          const out = await tool.run(input);
-          content = typeof out === "string" ? out : JSON.stringify(out);
-        } catch (error) {
-          content = `Erreur : ${error instanceof Error ? error.message : String(error)}`;
-        }
-        messages.push({ role: "tool", tool_call_id: call.id, content });
+        messages.push({ role: "tool", tool_call_id: call.id, content: await runTool(o, call.function.name, call.function.arguments) });
       }
     }
     return;
