@@ -1,8 +1,10 @@
 "use client";
 
-// La zone de prompt : grande boîte arrondie, « + » pour joindre un texte, « Outils »
-// pour le modèle et le mode, micro (bientôt), bouton envoyer rouge dès qu'il y a du texte.
-import { useEffect, useRef, useState } from "react";
+// La zone de prompt : grande boîte arrondie, « + » pour joindre un texte, sélecteur de
+// modèle (logos en dégradé rouge), micro (bientôt), bouton envoyer rouge dès qu'il y a du texte.
+// Le mode (contrôle / exploration) se choisit ensuite, dans le message de cadrage.
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ModelBadge, ModelIcon } from "@/components/model-icons";
 import { MODEL_CHOICES, type Mode, type ModelId } from "@/lib/types";
 
 export const MODE_LABEL: Record<Mode, string> = {
@@ -17,8 +19,6 @@ interface Props {
   disabled?: boolean;
   model: ModelId;
   onModel: (model: ModelId) => void;
-  mode: Mode | null; // null = laisser l'IA proposer
-  onMode: (mode: Mode | null) => void;
   attachment: string;
   onAttachment: (text: string) => void;
   onExample: () => void;
@@ -44,13 +44,12 @@ function useClickOutside(open: boolean, close: () => void) {
 }
 
 export function ChatComposer(props: Props) {
-  const { value, onChange, onSubmit, disabled, model, onModel, mode, onMode, attachment, onAttachment, onExample, autoFocus } = props;
+  const { value, onChange, onSubmit, disabled, model, onModel, attachment, onAttachment, onExample, autoFocus } = props;
   const textarea = useRef<HTMLTextAreaElement>(null);
-  const [panel, setPanel] = useState<"joindre" | "outils" | null>(null);
-  const closePanel = () => setPanel(null);
+  const [panel, setPanel] = useState<"joindre" | "modele" | null>(null);
+  const closePanel = useCallback(() => setPanel(null), []);
   const panelRef = useClickOutside(panel !== null, closePanel);
   const canSend = !disabled && value.trim().length > 0;
-  const modelLabel = MODEL_CHOICES.find((m) => m.id === model)?.label ?? model;
 
   // Hauteur automatique du champ.
   useEffect(() => {
@@ -124,21 +123,7 @@ export function ChatComposer(props: Props) {
               <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </button>
-          <button
-            type="button"
-            aria-expanded={panel === "outils"}
-            onClick={() => setPanel(panel === "outils" ? null : "outils")}
-            className="flex h-9 items-center gap-2 rounded-full px-3 text-[14px] text-ink transition-colors hover:bg-card focus-visible:outline-2 focus-visible:outline-red"
-          >
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M4 7h9M17 7h3M4 17h3M11 17h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-              <circle cx="15" cy="7" r="2" stroke="currentColor" strokeWidth="1.8" />
-              <circle cx="9" cy="17" r="2" stroke="currentColor" strokeWidth="1.8" />
-            </svg>
-            Outils
-          </button>
-          <span className="ml-1 hidden truncate rounded-full bg-card px-2.5 py-1 text-[12px] text-body sm:inline">{modelLabel}</span>
-          {mode && <span className="hidden truncate rounded-full bg-red/10 px-2.5 py-1 text-[12px] text-red-deep md:inline">{MODE_LABEL[mode]}</span>}
+          <ModelButton model={model} open={panel === "modele"} onToggle={() => setPanel(panel === "modele" ? null : "modele")} />
 
           <div className="flex-1" />
 
@@ -203,47 +188,113 @@ export function ChatComposer(props: Props) {
         </div>
       )}
 
-      {panel === "outils" && (
-        <div role="dialog" aria-label="Outils" className="absolute bottom-full left-0 z-30 mb-3 w-full max-w-[340px] rounded-[16px] border border-line bg-white p-2 shadow-[var(--shadow-lg)]">
-          <p className="px-3 pt-2 pb-1 fl-eyebrow">Modèle</p>
-          {MODEL_CHOICES.map((choice) => {
-            const disabledChoice = "disabled" in choice && choice.disabled;
-            const active = choice.id === model;
-            return (
-              <button
-                key={choice.id}
-                type="button"
-                disabled={disabledChoice}
-                onClick={() => onModel(choice.id)}
-                className={`flex w-full items-center justify-between gap-3 rounded-[10px] px-3 py-2.5 text-left text-[14px] transition-colors ${active ? "bg-card" : "hover:bg-warm"} disabled:cursor-not-allowed disabled:opacity-50`}
-              >
-                <span>
-                  <span className="block font-medium">{choice.label}</span>
-                  <span className="block text-[12px] text-muted">{choice.hint}</span>
-                </span>
-                {active && <span className="size-2 rounded-full bg-red" aria-label="sélectionné" />}
-              </button>
-            );
-          })}
-          <p className="mt-1 border-t border-line px-3 pt-3 pb-1 fl-eyebrow">Mode</p>
-          {([null, "controle", "exploration"] as const).map((m) => (
-            <button
-              key={m ?? "auto"}
-              type="button"
-              onClick={() => onMode(m)}
-              className={`flex w-full items-center justify-between rounded-[10px] px-3 py-2.5 text-left text-[14px] transition-colors ${mode === m ? "bg-card" : "hover:bg-warm"}`}
+      {panel === "modele" && (
+        <ModelMenu
+          model={model}
+          onPick={(id) => {
+            onModel(id);
+            setPanel(null);
+            textarea.current?.focus();
+          }}
+          onClose={() => setPanel(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+const fmtPrice = (n: number) => n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function ModelButton({ model, open, onToggle }: { model: ModelId; open: boolean; onToggle: () => void }) {
+  const choice = MODEL_CHOICES.find((m) => m.id === model) ?? MODEL_CHOICES[0];
+  return (
+    <button
+      type="button"
+      aria-haspopup="listbox"
+      aria-expanded={open}
+      aria-label={`Modèle : ${choice.label}`}
+      onClick={onToggle}
+      className={`flex h-9 max-w-[220px] items-center gap-2 rounded-full border px-3 text-[14px] text-ink transition-colors focus-visible:outline-2 focus-visible:outline-red ${
+        open ? "border-[#ff2e2e40] bg-[#fff4f1]" : "border-line hover:bg-card"
+      }`}
+    >
+      <ModelIcon provider={choice.provider} size={16} />
+      <span className="truncate">{choice.label}</span>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true" className={`shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`}>
+        <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
+function ModelMenu({ model, onPick, onClose }: { model: ModelId; onPick: (id: ModelId) => void; onClose: () => void }) {
+  const listRef = useRef<HTMLUListElement>(null);
+  const [active, setActive] = useState(() => Math.max(0, MODEL_CHOICES.findIndex((m) => m.id === model)));
+
+  useEffect(() => {
+    listRef.current?.focus();
+  }, []);
+
+  return (
+    <div className="absolute bottom-full left-0 z-30 mb-3 w-full max-w-[380px] rounded-[18px] border border-line bg-white p-2 shadow-[var(--shadow-lg)]">
+      <p className="px-3 pt-2 pb-2 fl-eyebrow">Modèle de jugement</p>
+      <ul
+        ref={listRef}
+        role="listbox"
+        tabIndex={-1}
+        aria-label="Choisir un modèle"
+        aria-activedescendant={`model-opt-${MODEL_CHOICES[active].id}`}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setActive((i) => (i + 1) % MODEL_CHOICES.length);
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setActive((i) => (i - 1 + MODEL_CHOICES.length) % MODEL_CHOICES.length);
+          } else if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onPick(MODEL_CHOICES[active].id);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            onClose();
+          }
+        }}
+        className="outline-none"
+      >
+        {MODEL_CHOICES.map((choice, i) => {
+          const selected = choice.id === model;
+          return (
+            <li
+              key={choice.id}
+              id={`model-opt-${choice.id}`}
+              role="option"
+              aria-selected={selected}
+              onMouseEnter={() => setActive(i)}
+              onClick={() => onPick(choice.id)}
+              className={`flex cursor-pointer items-center gap-3 rounded-[12px] px-3 py-2.5 transition-colors ${i === active ? "bg-warm" : ""}`}
             >
-              <span>
-                <span className="block font-medium">{m ? MODE_LABEL[m] : "Automatique"}</span>
-                <span className="block text-[12px] text-muted">
-                  {m === "controle" ? "Texte presque prêt : chercher les conflits" : m === "exploration" ? "Idée floue : voir ce qui existe déjà" : "L’IA propose le mode selon votre demande"}
+              <ModelBadge provider={choice.provider} />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-2 text-[14px] font-medium text-ink">
+                  {choice.label}
+                  {i === 0 && <span className="rounded-full bg-gradient-to-r from-[#ff2e2e] to-[#ff7a2e] px-2 py-0.5 text-[10.5px] font-semibold text-white">Recommandé</span>}
+                </span>
+                <span className="block truncate text-[12px] text-muted">
+                  {choice.hint.replace(/^Recommandé · /, "")} · {fmtPrice(choice.price[0])} $ / {fmtPrice(choice.price[1])} $ par M tokens
                 </span>
               </span>
-              {mode === m && <span className="size-2 rounded-full bg-red" aria-label="sélectionné" />}
-            </button>
-          ))}
-        </div>
-      )}
+              {selected && (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0 text-red">
+                  <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-1 border-t border-line px-3 pt-2.5 pb-1.5 text-[11.5px] leading-snug text-muted">
+        Les recherches tournent toujours sur Claude Haiku 5.5 ; ce modèle rend le jugement final.
+      </p>
     </div>
   );
 }

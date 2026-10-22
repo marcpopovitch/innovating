@@ -83,8 +83,7 @@ function ChatView() {
   const [sentPrompt, setSentPrompt] = useState("");
   const [attachment, setAttachment] = useState("");
   const [sentAttachment, setSentAttachment] = useState("");
-  const [model, setModel] = useState<ModelId>("claude-opus-5-5");
-  const [preferredMode, setPreferredMode] = useState<Mode | null>(null);
+  const [model, setModel] = useState<ModelId>("claude-haiku-5-5");
   const [mode, setMode] = useState<Mode>("controle");
   const [cadrage, setCadrage] = useState<CadrageResponse | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -230,7 +229,7 @@ function ChatView() {
       result = fallbackCadrage(text, attachment.length > 0);
     }
     setCadrage(result);
-    setMode(preferredMode ?? result.mode);
+    setMode(result.mode);
     setAnswers(Object.fromEntries(result.questions.filter((q) => q.default).map((q) => [q.id, q.default as string])));
     setPhase("cadrage");
   }
@@ -249,7 +248,10 @@ function ChatView() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ title: (cadrage.title || sentPrompt).slice(0, 300), input, mode, model, cadrage: cadrageAnswers, collectivite: null, date_acte: null }),
       });
-      if (res.status === 503) throw new Error("Clé ANTHROPIC_API_KEY manquante côté serveur : ajoutez-la dans lexguard/.env puis relancez le serveur.");
+      if (res.status === 503) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Aucune clé de modèle côté serveur : ajoutez OPENROUTER_API_KEY (ou ANTHROPIC_API_KEY) dans lexguard/.env puis relancez le serveur.");
+      }
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error ?? `réponse ${res.status}`);
@@ -277,8 +279,6 @@ function ChatView() {
       disabled={busy}
       model={model}
       onModel={setModel}
-      mode={preferredMode}
-      onMode={setPreferredMode}
       attachment={attachment}
       onAttachment={setAttachment}
       onExample={() => {
