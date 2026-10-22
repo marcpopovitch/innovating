@@ -154,6 +154,31 @@ const orUsage = (u?: { prompt_tokens?: number; completion_tokens?: number; cost?
 
 // ---------- Interface commune ----------
 
+/**
+ * Lecture d'un document photographié ou scanné : le modèle recopie le texte mot pour mot et
+ * signale ce qui compte pour la forme (signature manuscrite, cachet, passages illisibles).
+ */
+export async function transcribe(images: Array<{ mime: string; base64: string }>): Promise<string> {
+  const r = route(MODELS.fast);
+  if (r.kind === "anthropic") throw new Error("Lecture des images indisponible : ajoutez OPENAI_API_KEY ou OPENROUTER_API_KEY.");
+  const res = await chatCompletions(r, {
+    max_tokens: 16000,
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Recopie mot pour mot tout le texte de ce document administratif (une image par page, dans l'ordre), sans rien résumer ni corriger. Garde les titres, numéros d'articles et retours à la ligne. Signale entre crochets ce qui n'est pas du texte mais compte pour sa validité : [signature manuscrite], [cachet de la mairie], [illisible]. S'il n'y a ni signature ni cachet, n'en mentionne pas.",
+          },
+          ...images.map((i) => ({ type: "image_url", image_url: { url: `data:${i.mime};base64,${i.base64}` } })),
+        ],
+      },
+    ],
+  });
+  return res.choices[0]?.message.content?.trim() ?? "";
+}
+
 /** Un appel, une réponse JSON validée par le schéma Zod. */
 export async function structured<T extends z.ZodType>(meter: CostMeter, model: string, effort: Effort, system: string, user: string, schema: T, maxTokens = 16000): Promise<z.infer<T>> {
   const r = route(model);

@@ -1,4 +1,4 @@
-// Orchestration d'une analyse : analyste → chercheurs en parallèle → juges →
+// Orchestration d'une analyse : contrôle de forme + analyste → chercheurs en parallèle → juges →
 // contradicteurs + contrôles en code → rédacteur. Chaque étape est journalisée.
 import { randomUUID } from "node:crypto";
 import { db } from "../db";
@@ -8,8 +8,8 @@ import { cadrageText, periodSince } from "./cadrage";
 import { emit } from "./events";
 import { runExploration } from "./exploration";
 import { CostMeter, withModel } from "./llm";
-import { analyst, critic, judge, LEVELS, levelResearcher, researcher, writer } from "./roles";
-import { getArticles, sourceUrl } from "./tools";
+import { analyst, critic, formalist, judge, LEVELS, levelResearcher, researcher, writer } from "./roles";
+import { findByNum, getArticles, sourceUrl } from "./tools";
 import { checkCitation } from "./verify";
 
 export interface AnalysisInput {
@@ -48,6 +48,44 @@ interface StoredFinding {
 }
 
 type LevelDossier = Awaited<ReturnType<typeof levelResearcher>>;
+
+const ELEMENT_LABEL: Record<string, string> = {
+  autorite: "une autorité qui l'édicte",
+  date: "une date",
+  dispositif: "un dispositif (« ARRÊTE », « DÉCIDE »… suivi d'articles)",
+  signature: "une signature",
+  identite_signataire: "le prénom, le nom et la qualité du signataire",
+  visas: "des visas",
+  motivation: "une motivation",
+  voies_recours: "la mention des voies et délais de recours",
+};
+
+/** Contrôle de forme : nature du document et manquements aux règles de forme, chacun vérifié dans le corpus. */
+async function controleForme(analysisId: string, meter: CostMeter, input: string, dateActe: string | null) {
+  await emit(analysisId, "analyste", "etape", "Contrôle de la forme : nature du document, signature, mentions obligatoires");
+  const out = await formalist(meter, input, (num, code) => findByNum("contrôle de forme", num, code));
+  const byId = new Map(out.articles.map((a) => [a.id, a]));
+  const absents = out.elements.filter((e) => !e.present).map((e) => ELEMENT_LABEL[e.element] ?? e.element);
+  await emit(analysisId, "analyste", "resultat", `Nature : ${out.description}${absents.length ? ` — absent : ${absents.join(", ")}` : ""}`);
+  const disposition: Disposition = { id: "forme", text: out.description, objet: "Forme de l'acte", mesure: "", autorite: "", references: [] };
+  const client = await db();
+  const findings: StoredFinding[] = [];
+  for (const m of out.manquements) {
+    // Même exigence que pour le fond : l'article doit exister, être en vigueur et contenir l'extrait.
+    const problems = checkCitation(byId.get(m.article_id) as never, m.quote, dateActe);
+    const verified = problems.length === 0;
+    const a = byId.get(m.article_id);
+    const citations: Citation[] = [{ article_id: m.article_id, num: a?.num ?? "?", code: a?.code_title ?? "?", quote: m.quote, url: a ? sourceUrl(a) : legifranceArticleUrl(m.article_id) }];
+    await client.query(
+      `insert into findings (id, analysis_id, disposition, verdict, severity, title, explanation, citations, suggestion, verified, rejection_reason)
+       values ($1, $2, $3, 'forme', $4, $5, $6, $7, $8, $9, $10)`,
+      [randomUUID(), analysisId, JSON.stringify(disposition), m.severity, m.title, m.explanation, JSON.stringify(citations), m.suggestion || null, verified, verified ? null : problems.join(" ; ")],
+    );
+    await emit(analysisId, verified ? "juge" : "contradicteur", verified ? "resultat" : "rejet", verified ? `Vice de forme : ${m.title}` : `Alerte de forme écartée : ${problems.join(" ; ")}`);
+    findings.push({ verdict: "forme", severity: m.severity, title: m.title, verified });
+  }
+  return { nature: out.nature, description: out.description, absents, findings };
+}
 
 async function analyseDisposition(
   analysisId: string,
@@ -149,14 +187,25 @@ async function run(analysisId: string): Promise<void> {
       return;
     }
 
+    // Forme et découpage en parallèle : la forme dit d'abord si le document est bien un acte.
+    const formeP = controleForme(analysisId, meter, a.input, a.date_acte).catch(async (error) => {
+      await emit(analysisId, "orchestrateur", "erreur", `Contrôle de forme : ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    });
     await emit(analysisId, "analyste", "etape", "Découpage de l'acte en dispositions normatives");
     const { autorite, dispositions } = await analyst(meter, a.input);
     await emit(analysisId, "analyste", "resultat", `${dispositions.length} dispositions identifiées (autorité : ${autorite})`, { dispositions });
-    // Rien à contrôler (notes, tableau, courrier…) : le dire, plutôt que « aucune irrégularité ».
-    if (!dispositions.length) {
-      const headline = `« ${a.title} » ne contient aucune règle à contrôler : ce n'est pas un arrêté, une délibération ou un décret. Déposez l'acte lui-même.`;
+    const forme = await formeP;
+    const formeFindings = forme?.findings ?? [];
+
+    // Pas un acte (notes, tableau, courrier…) : dire précisément ce que c'est et ce qui manque.
+    if (forme?.nature === "autre" || !dispositions.length) {
+      const what = forme ? `c'est ${forme.description.charAt(0).toLowerCase()}${forme.description.slice(1).replace(/\.$/, "")}` : "il ne contient aucune règle à contrôler";
+      const missing = forme?.absents.length ? ` Il lui manque ${forme.absents.join(", ")}.` : "";
+      const headline = `« ${a.title} » n'est pas un acte administratif valable : ${what}.${missing} Déposez l'arrêté, la délibération ou le décret lui-même.`;
       const counts = { conflit: 0, doublon: 0, vide: 0, incompetence: 0, forme: 0, conforme: 0, existant: 0 } as Record<Verdict, number>;
-      await finish(headline, { headline, counts, rejected: 0, articles_consulted: 0 });
+      for (const f of formeFindings) if (f.verified) counts.forme += 1;
+      await finish(headline, { headline, counts, rejected: formeFindings.filter((f) => !f.verified).length, articles_consulted: 0 });
       return;
     }
 
@@ -177,14 +226,15 @@ async function run(analysisId: string): Promise<void> {
       }),
     ).then((all) => all.filter((r): r is LevelDossier => r !== null));
     const settled = await Promise.allSettled(dispositions.map((d) => analyseDisposition(analysisId, meter, d, ctx, consulted, levels)));
-    const findings = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
+    const substantive = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
     for (const s of settled) if (s.status === "rejected") await emit(analysisId, "orchestrateur", "erreur", String(s.reason instanceof Error ? s.reason.message : s.reason));
     // Aucun chercheur n'a abouti : conclure « aucune irrégularité » serait faux, l'analyse échoue.
     const failed = settled.find((s) => s.status === "rejected");
-    if (dispositions.length && !findings.length && failed) {
+    if (dispositions.length && !substantive.length && failed) {
       throw new Error(`Aucune disposition n'a pu être vérifiée (${failed.reason instanceof Error ? failed.reason.message : String(failed.reason)}). Relancez l'analyse.`);
     }
 
+    const findings = [...formeFindings, ...substantive];
     await emit(analysisId, "redacteur", "etape", "Rédaction de la synthèse");
     const { headline } = await writer(meter, a.title, findings);
     const counts = { conflit: 0, doublon: 0, vide: 0, incompetence: 0, forme: 0, conforme: 0, existant: 0 } as Record<Verdict, number>;
