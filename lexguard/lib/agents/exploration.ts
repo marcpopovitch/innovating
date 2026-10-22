@@ -5,12 +5,11 @@ import { randomUUID } from "node:crypto";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { db } from "../db";
-import { legifranceArticleUrl } from "../dila";
 import type { Citation, Disposition } from "../types";
 import { emit } from "./events";
 import { anthropic, type CostMeter, FALLBACK, MODELS } from "./llm";
 import { articleBlock, researcher } from "./roles";
-import { getArticles } from "./tools";
+import { getArticles, sourceUrl } from "./tools";
 import { checkCitation } from "./verify";
 
 const Plan = z.object({
@@ -84,7 +83,7 @@ export async function runExploration(analysisId: string, meter: CostMeter, idea:
     if (verified) kept += 1;
     const citations: Citation[] = valid.map((c) => {
       const a = byId.get(c.article_id)!;
-      return { article_id: a.id, num: a.num ?? "?", code: a.code_title, quote: c.quote, url: legifranceArticleUrl(a.id) };
+      return { article_id: a.id, num: a.num ?? "?", code: a.code_title, quote: c.quote, url: sourceUrl(a) };
     });
     await client.query(
       `insert into findings (id, analysis_id, disposition, verdict, severity, title, explanation, citations, suggestion, verified, rejection_reason)

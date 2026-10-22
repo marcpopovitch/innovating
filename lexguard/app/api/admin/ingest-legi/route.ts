@@ -1,5 +1,6 @@
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
+import { ingestHierarchy } from "@/scripts/ingest-hierarchy";
 import { ingestLegi } from "@/scripts/ingest-legi";
 
 // Applique les incréments LEGI depuis le serveur déjà lancé (la base PGlite locale
@@ -13,7 +14,9 @@ export async function POST(request: Request) {
   running = true;
   const logFile = join(process.cwd(), ".data", "ingest-legi-incr.log");
   const log = (m: string) => appendFileSync(logFile, `${m}\n`);
-  void ingestLegi(undefined, "all", log, false)
+  // ?job=hierarchie : Constitution, codes supplémentaires, CEDH/UE, Conseil d'État.
+  const job = new URL(request.url).searchParams.get("job");
+  void (job === "hierarchie" ? ingestHierarchy(log, false) : ingestLegi(undefined, "all", log, false))
     .catch((error) => log(`ERREUR ${error instanceof Error ? error.message : String(error)}`))
     .finally(() => {
       running = false;

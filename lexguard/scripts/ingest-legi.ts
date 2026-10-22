@@ -4,7 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CODES } from "../lib/codes";
+import { ALL_TEXTS } from "../lib/codes";
 import { db } from "../lib/db";
 import { type ParsedArticle, parseArticle } from "../lib/dila";
 
@@ -19,9 +19,10 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
-function extract(archive: string, out: string) {
+function extract(archive: string, out: string, ids: string[]) {
   mkdirSync(out, { recursive: true });
-  const patterns = Object.keys(CODES).flatMap((id) => ["--include", `*code_en_vigueur*/${id}/article/*`]);
+  // Codes (code_en_vigueur) comme textes non codifiés (TNC_en_vigueur : Constitution, DDHC…).
+  const patterns = ids.flatMap((id) => ["--include", `*_en_vigueur*/${id}/article/*`]);
   try {
     execFileSync("tar", ["-xzf", archive, "-C", out, ...patterns], { stdio: "pipe", maxBuffer: 1 << 26 });
   } catch (error) {
@@ -37,13 +38,14 @@ async function insertBatch(batch: ParsedArticle[]) {
   const client = await db();
   const values: unknown[] = [];
   const rows = batch.map((a, i) => {
-    values.push(a.id, a.cid, a.text_id, CODES[a.text_id] ?? a.text_title, a.num, a.section, a.content, a.etat, a.date_debut, a.date_fin);
-    const o = i * 10;
-    return `($${o + 1}, $${o + 2}, $${o + 3}, $${o + 4}, $${o + 5}, $${o + 6}, $${o + 7}, $${o + 8}, $${o + 9}, $${o + 10})`;
+    const meta = ALL_TEXTS[a.text_id];
+    values.push(a.id, a.cid, a.text_id, meta?.title ?? a.text_title, a.num, a.section, a.content, a.etat, a.date_debut, a.date_fin, meta?.niveau ?? "code");
+    const o = i * 11;
+    return `($${o + 1}, $${o + 2}, $${o + 3}, $${o + 4}, $${o + 5}, $${o + 6}, $${o + 7}, $${o + 8}, $${o + 9}, $${o + 10}, $${o + 11})`;
   });
   await client.query(
-    `insert into articles (id, cid, code_id, code_title, num, section, text, etat, date_debut, date_fin) values ${rows.join(",")}
-     on conflict (id) do update set text = excluded.text, etat = excluded.etat, date_debut = excluded.date_debut, date_fin = excluded.date_fin, section = excluded.section`,
+    `insert into articles (id, cid, code_id, code_title, num, section, text, etat, date_debut, date_fin, niveau) values ${rows.join(",")}
+     on conflict (id) do update set text = excluded.text, etat = excluded.etat, date_debut = excluded.date_debut, date_fin = excluded.date_fin, section = excluded.section, niveau = excluded.niveau`,
     values,
   );
   const links = batch.flatMap((a) => a.liens.map((l) => [a.id, l.id, l.type, l.sens, l.num ? `${l.title}`.slice(0, 300) : l.title.slice(0, 300)]));
@@ -63,7 +65,7 @@ async function load(dir: string, log: (m: string) => void) {
   let n = 0;
   for (const path of walk(dir)) {
     const a = parseArticle(readFileSync(path, "utf8"));
-    if (!a || !a.content || !CODES[a.text_id]) continue;
+    if (!a || !a.content || !ALL_TEXTS[a.text_id]) continue;
     batch.push(a);
     if (batch.length === 300) {
       await insertBatch(batch);
@@ -76,14 +78,21 @@ async function load(dir: string, log: (m: string) => void) {
   return n + batch.length;
 }
 
-export async function ingestLegi(dumpArg?: string, incrementsArg?: string, log: (m: string) => void = console.log, closeAtEnd = true) {
+export async function ingestLegi(
+  dumpArg?: string,
+  incrementsArg?: string,
+  log: (m: string) => void = console.log,
+  closeAtEnd = true,
+  ids: string[] = Object.keys(ALL_TEXTS),
+  tag = "", // suffixe des dossiers d'extraction (pour ajouter des textes sans tout refaire)
+) {
   const dump = dumpArg ?? join(DIR, "legi_global.tar.gz");
   // « all » rejoue tous les incréments parus depuis le dump (le dump DILA date de juillet 2025).
   const increments = incrementsArg ?? "all";
-  const out = join(DIR, "legi_codes");
+  const out = join(DIR, `legi_codes${tag}`);
   if (!existsSync(join(out, ".done"))) {
-    log(`Extraction des ${Object.keys(CODES).length} codes depuis ${dump}…`);
-    extract(dump, out);
+    log(`Extraction de ${ids.length} textes depuis ${dump}…`);
+    extract(dump, out, ids);
     writeFileSync(join(out, ".done"), new Date().toISOString());
   }
   if (!existsSync(join(out, ".loaded"))) {
@@ -127,8 +136,8 @@ export async function ingestLegi(dumpArg?: string, incrementsArg?: string, log: 
   );
   for (const file of files) {
     const archive = join(DIR, "legi_increments", file);
-    const target = archive.replace(".tar.gz", "");
-    if (!existsSync(target)) extract(archive, target);
+    const target = archive.replace(".tar.gz", tag);
+    if (!existsSync(target)) extract(archive, target, ids);
     log(`${file} : ${await load(target, log)} articles mis à jour`);
     await (await db()).query("insert into meta (key, value) values ('legi_a_jour_au', $1) on conflict (key) do update set value = excluded.value", [`${file.slice(5, 9)}-${file.slice(9, 11)}-${file.slice(11, 13)}`]);
   }

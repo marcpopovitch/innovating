@@ -8,8 +8,8 @@ import { cadrageText, periodSince } from "./cadrage";
 import { emit } from "./events";
 import { runExploration } from "./exploration";
 import { CostMeter, withModel } from "./llm";
-import { analyst, critic, judge, researcher, writer } from "./roles";
-import { getArticles } from "./tools";
+import { analyst, critic, judge, LEVELS, levelResearcher, researcher, writer } from "./roles";
+import { getArticles, sourceUrl } from "./tools";
 import { checkCitation } from "./verify";
 
 export interface AnalysisInput {
@@ -47,16 +47,35 @@ interface StoredFinding {
   verified: boolean;
 }
 
-async function analyseDisposition(analysisId: string, meter: CostMeter, d: Disposition, ctx: { autorite: string; collectivite: string | null; date: string | null; cadrage: string }, consultedAll: Set<string>): Promise<StoredFinding> {
+type LevelDossier = Awaited<ReturnType<typeof levelResearcher>>;
+
+async function analyseDisposition(
+  analysisId: string,
+  meter: CostMeter,
+  d: Disposition,
+  ctx: { autorite: string; collectivite: string | null; date: string | null; cadrage: string },
+  consultedAll: Set<string>,
+  levels: Promise<LevelDossier[]>, // dossiers des experts constitution / UE / jurisprudence (partagés)
+): Promise<StoredFinding> {
   const tag = `${d.id} · ${d.objet}`;
   await emit(analysisId, "chercheur", "etape", `Recherche des normes applicables — ${tag}`);
   const dossier = await researcher(meter, d, ctx, (msg) => void emit(analysisId, "chercheur", "outil", `${d.id} → ${msg}`), { mode: "controle", cadrage: ctx.cadrage });
   dossier.consulted.forEach((id) => consultedAll.add(id));
-  const articles = await getArticles("juge", [...dossier.candidates.keys()]);
-  await emit(analysisId, "chercheur", "resultat", `${d.id} : ${articles.length} articles retenus sur ${dossier.consulted.size} consultés`, { articles: articles.map((a) => `${a.code_title} ${a.num}`) });
+  // On ajoute au dossier des codes ce que les experts de niveau ont retenu pour cette disposition.
+  const why = new Map(dossier.candidates);
+  let notes = dossier.notes;
+  for (const lv of await levels) {
+    for (const [id, w] of lv.candidates) {
+      const targets = lv.assign.get(id) ?? [];
+      if (!targets.length || targets.includes(d.id)) why.set(id, `${lv.level.label} — ${w}`);
+    }
+    if (lv.notes) notes += `\n${lv.level.label} : ${lv.notes}`;
+  }
+  const articles = await getArticles("juge", [...why.keys()].slice(0, 16));
+  await emit(analysisId, "chercheur", "resultat", `${d.id} : ${articles.length} textes retenus (codes, Constitution, UE, jurisprudence)`, { articles: articles.map((a) => `${a.code_title} ${a.num}`) });
 
   await emit(analysisId, "juge", "etape", `Qualification juridique — ${tag}`);
-  const verdict = await judge(meter, d, articles, dossier.candidates, dossier.notes, ctx.date, ctx.cadrage);
+  const verdict = await judge(meter, d, articles, why, notes, ctx.date, ctx.cadrage);
 
   // Contrôles en code : chaque citation doit exister, être en vigueur et contenir l'extrait.
   const byId = new Map(articles.map((a) => [a.id, a]));
@@ -81,7 +100,7 @@ async function analyseDisposition(analysisId: string, meter: CostMeter, d: Dispo
 
   const citations: Citation[] = verdict.citations.map((c) => {
     const a = byId.get(c.article_id);
-    return { article_id: c.article_id, num: a?.num ?? "?", code: a?.code_title ?? "?", quote: c.quote, url: legifranceArticleUrl(c.article_id) };
+    return { article_id: c.article_id, num: a?.num ?? "?", code: a?.code_title ?? "?", quote: c.quote, url: a ? sourceUrl(a) : legifranceArticleUrl(c.article_id) };
   });
   const client = await db();
   await client.query(
@@ -135,8 +154,22 @@ async function run(analysisId: string): Promise<void> {
     await emit(analysisId, "analyste", "resultat", `${dispositions.length} dispositions identifiées (autorité : ${autorite})`, { dispositions });
 
     const ctx = { autorite, collectivite: a.collectivite, date: a.date_acte, cadrage };
-    await emit(analysisId, "orchestrateur", "etape", `${dispositions.length} chercheurs lancés en parallèle`);
-    const settled = await Promise.allSettled(dispositions.map((d) => analyseDisposition(analysisId, meter, d, ctx, consulted)));
+    await emit(analysisId, "orchestrateur", "etape", `${dispositions.length} chercheurs (codes) + ${LEVELS.length} experts (Constitution, UE, jurisprudence) lancés en parallèle`);
+    const levels = Promise.all(
+      LEVELS.map(async (level) => {
+        await emit(analysisId, "chercheur", "etape", `Expert « ${level.label} »`);
+        const r = await levelResearcher(meter, level, dispositions, ctx, (msg) => void emit(analysisId, "chercheur", "outil", `${level.id} → ${msg}`), cadrage).catch(async (error) => {
+          await emit(analysisId, "orchestrateur", "erreur", `${level.label} : ${error instanceof Error ? error.message : String(error)}`);
+          return null;
+        });
+        if (r) {
+          r.consulted.forEach((id) => consulted.add(id));
+          await emit(analysisId, "chercheur", "resultat", `${level.label} : ${r.candidates.size} textes retenus`);
+        }
+        return r;
+      }),
+    ).then((all) => all.filter((r): r is LevelDossier => r !== null));
+    const settled = await Promise.allSettled(dispositions.map((d) => analyseDisposition(analysisId, meter, d, ctx, consulted, levels)));
     const findings = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
     for (const s of settled) if (s.status === "rejected") await emit(analysisId, "orchestrateur", "erreur", String(s.reason instanceof Error ? s.reason.message : s.reason));
 

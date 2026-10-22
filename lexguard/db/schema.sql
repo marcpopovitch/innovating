@@ -147,3 +147,8 @@ create table if not exists veille_impacts (
 alter table analyses add column if not exists mode text not null default 'controle';
 alter table analyses add column if not exists model text not null default 'claude-opus-5-5';
 alter table analyses add column if not exists cadrage jsonb;
+
+-- Pyramide des normes : niveau de chaque texte et lien vers la source officielle.
+alter table articles add column if not exists niveau text not null default 'code';
+alter table articles add column if not exists url text;
+create index if not exists articles_niveau on articles (niveau);

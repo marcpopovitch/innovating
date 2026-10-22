@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit",
     "sql": "tsx scripts/sql.ts",
     "veille": "tsx scripts/veille.ts",
-    "data-layer": "tsx scripts/data-layer.ts"
+    "data-layer": "tsx scripts/data-layer.ts",
+    "ingest:hierarchie": "tsx scripts/ingest-hierarchy.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.1.0",
