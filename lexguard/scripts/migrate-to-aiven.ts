@@ -1,6 +1,6 @@
 // Copie la base locale (PGlite, .data/pglite) vers Aiven PostgreSQL (DATABASE_URL).
 // À lancer serveur de dev arrêté (PGlite n'accepte qu'un processus) : npm run migrate:aiven
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
@@ -21,6 +21,9 @@ const TABLES: Array<{ name: string; key: string[] }> = [
   { name: "feedback", key: ["id"] },
 ];
 const BATCH = 500;
+
+// Les scripts tsx ne lisent pas .env tout seuls (Next.js, lui, le fait).
+if (existsSync(".env")) process.loadEnvFile(".env");
 
 async function main() {
   const url = process.env.DATABASE_URL;
