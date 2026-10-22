@@ -32,7 +32,7 @@ export default function VeillePage() {
   const impacted = items?.filter((i) => i.impacts.length > 0).length ?? 0;
 
   return (
-    <div className="fl-container pt-12">
+    <div className="fl-container pt-12 pb-24">
       <p className="fl-eyebrow">Veille du Journal officiel</p>
       <div className="mt-3 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <h1 className="max-w-[20ch] text-[clamp(30px,4vw,48px)] tracking-[-0.035em]">Ce qui a changé ce matin, et qui est concerné</h1>

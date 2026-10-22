@@ -45,7 +45,7 @@ export default function DonneesPage() {
   ];
 
   return (
-    <div className="fl-container pt-12">
+    <div className="fl-container pt-12 pb-24">
       <p className="fl-eyebrow">Couche de données</p>
       <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <h1 className="max-w-[20ch] text-[clamp(30px,4vw,48px)] tracking-[-0.035em]">Ce que les agents lisent, en direct</h1>
