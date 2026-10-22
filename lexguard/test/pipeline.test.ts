@@ -37,6 +37,19 @@ function fakeApi(judgeReply: Judge) {
     } else if (system.includes("découpes")) {
       calls.push("analyste");
       content = [{ type: "text", text: JSON.stringify({ autorite: "Le maire de Testville", dispositions: [{ text: "L'utilisation de produits phytopharmaceutiques est interdite sur le territoire communal.", objet: "interdiction des pesticides", mesure: "interdiction générale", autorite: "maire", perimetre: "territoire communal", references: ["CGCT L2212-2"] }] }) }];
+    } else if (system.includes("Tu es l'expert")) {
+      const level = system.match(/« ([^»]+) »/)?.[1] ?? "?";
+      const afterTool = Array.isArray(last.content) && last.content[0]?.type === "tool_result";
+      if (afterTool && JSON.stringify(last.content).includes("Dossier reçu")) {
+        calls.push(`expert:${level}:fin`);
+        content = [{ type: "text", text: "Terminé." }];
+      } else if (afterTool) {
+        calls.push(`expert:${level}:dossier`);
+        content = [{ type: "tool_use", id: "tu_e2", name: "submit_dossier", input: { candidates: [{ article_id: CGCT.id, why: "police générale", dispositions: ["d1"] }], notes: "" } }];
+      } else {
+        calls.push(`expert:${level}:recherche`);
+        content = [{ type: "tool_use", id: "tu_e1", name: "search_corpus", input: { query: "liberté" } }];
+      }
     } else if (system.includes("chercheur juridique")) {
       const afterTool = Array.isArray(last.content) && last.content[0]?.type === "tool_result";
       if (afterTool && JSON.stringify(last.content).includes("Dossier reçu")) {
@@ -94,7 +107,13 @@ async function run(judge: Judge, mode: "controle" | "exploration" = "controle") 
 describe("équipe d'agents", () => {
   it("enchaîne analyste → chercheur (plusieurs étapes) → juge → contradicteur → rédacteur et garde une alerte vérifiée", async () => {
     const r = await run({ quote: "prendre toute mesure d'interdiction, de restriction ou de prescription particulière concernant", keep: true });
-    expect(r.calls).toEqual(["analyste", "chercheur:recherche", "chercheur:dossier", "chercheur:fin", "juge", "contradicteur", "redacteur"]);
+    // Chercheur des codes et 3 experts de niveau travaillent en parallèle, puis juge → contradicteur → rédacteur.
+    expect(r.calls[0]).toBe("analyste");
+    expect(r.calls.slice(-3)).toEqual(["juge", "contradicteur", "redacteur"]);
+    expect(r.calls.filter((c) => c.startsWith("chercheur:"))).toEqual(["chercheur:recherche", "chercheur:dossier", "chercheur:fin"]);
+    expect(new Set(r.calls.filter((c) => c.endsWith(":dossier") && c.startsWith("expert:")))).toEqual(
+      new Set(["expert:Bloc de constitutionnalité:dossier", "expert:Droit international et de l'UE:dossier", "expert:Jurisprudence administrative:dossier"]),
+    );
     expect(r.findings).toHaveLength(1);
     expect(r.findings[0]).toMatchObject({ verdict: "incompetence", verified: true, rejection_reason: null });
     expect(r.findings[0].citations[0].url).toBe(`https://www.legifrance.gouv.fr/codes/article_lc/${RURAL.id}`);
