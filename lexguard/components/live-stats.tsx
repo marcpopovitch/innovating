@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useI18n } from "@/components/lang-provider";
 import type { Stats } from "@/lib/types";
-
-const fmt = (n: number | undefined) => (n == null ? "—" : new Intl.NumberFormat("fr-FR").format(n));
 
 /** Compteurs lus en direct dans la couche de données (« — » si l'API ne répond pas). */
 export function LiveStats() {
+  const { t, lang } = useI18n();
+  const locale = lang === "en" ? "en-GB" : "fr-FR";
+  const fmt = (n: number | undefined) => (n == null ? "—" : new Intl.NumberFormat(locale).format(n));
   const [stats, setStats] = useState<Stats | null>(null);
 
   useEffect(() => {
@@ -25,10 +27,10 @@ export function LiveStats() {
   }, []);
 
   const items = [
-    { value: fmt(stats?.articles_en_vigueur), label: "articles de codes en vigueur" },
-    { value: fmt(stats?.links), label: "liens dans le graphe des normes" },
-    { value: fmt(stats?.jo_texts), label: "textes du Journal officiel suivis" },
-    { value: fmt(stats?.local_acts), label: "actes locaux en mémoire" },
+    { value: fmt(stats?.articles_en_vigueur), label: t("landing.stats.articles") },
+    { value: fmt(stats?.links), label: t("landing.stats.links") },
+    { value: fmt(stats?.jo_texts), label: t("landing.stats.jo") },
+    { value: fmt(stats?.local_acts), label: t("landing.stats.local") },
   ];
 
   return (
@@ -40,7 +42,7 @@ export function LiveStats() {
         </div>
       ))}
       <p className="col-span-2 text-[13px] text-muted md:col-span-4">
-        {stats?.last_jo_date ? `Dernier Journal officiel ingéré : ${new Date(stats.last_jo_date).toLocaleDateString("fr-FR")}` : "Compteurs lus en direct dans la base de Ciceron."}
+        {stats?.last_jo_date ? t("landing.stats.lastJo", { date: new Date(stats.last_jo_date).toLocaleDateString(locale) }) : t("landing.stats.live")}
       </p>
     </div>
   );

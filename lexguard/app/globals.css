@@ -315,3 +315,86 @@ h4 {
 .fl-pulse {
   animation: fl-pulse 1.4s ease-in-out infinite;
 }
+
+/* Mascotte brique des sous-agents (components/brick-mascot.tsx) : course, ombre, clignement. */
+.brick-mascot-body {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: brick-mascot-bob 0.36s ease-in-out infinite;
+}
+.brick-mascot-leg-a,
+.brick-mascot-leg-b {
+  transform-box: fill-box;
+  transform-origin: 50% 0;
+  animation: brick-mascot-stride 0.72s ease-in-out infinite;
+}
+.brick-mascot-leg-b {
+  animation-delay: -0.36s;
+}
+.brick-mascot-shadow {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: brick-mascot-shadow 0.36s ease-in-out infinite;
+}
+.brick-mascot-eyes {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: brick-mascot-blink 3.2s ease-in-out infinite;
+}
+.brick-mascot--idle .brick-mascot-body,
+.brick-mascot--idle .brick-mascot-leg-a,
+.brick-mascot--idle .brick-mascot-leg-b,
+.brick-mascot--idle .brick-mascot-shadow {
+  animation: none;
+}
+@keyframes brick-mascot-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-3deg);
+  }
+  50% {
+    transform: translateY(-16px) rotate(3deg);
+  }
+}
+@keyframes brick-mascot-stride {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-22px) rotate(14deg);
+  }
+  50% {
+    transform: translateY(-6px) rotate(0deg);
+  }
+}
+@keyframes brick-mascot-shadow {
+  0%,
+  100% {
+    transform: scaleX(1);
+    opacity: 0.18;
+  }
+  50% {
+    transform: scaleX(0.82);
+    opacity: 0.1;
+  }
+}
+@keyframes brick-mascot-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  95% {
+    transform: scaleY(0.1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .brick-mascot-body,
+  .brick-mascot-leg-a,
+  .brick-mascot-leg-b,
+  .brick-mascot-shadow,
+  .brick-mascot-eyes {
+    animation: none;
+  }
+}

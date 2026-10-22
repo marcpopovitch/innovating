@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import type { Stats } from "@/lib/types";
-
-const fmt = (n: number | undefined | null) => (n == null ? "—" : new Intl.NumberFormat("fr-FR").format(n));
+import { useI18n } from "@/components/lang-provider";
 
 export default function DonneesPage() {
+  const { t, lang } = useI18n();
+  const locale = lang === "en" ? "en-GB" : "fr-FR";
+  const fmt = (n: number | undefined | null) => (n == null ? "—" : new Intl.NumberFormat(locale).format(n));
   const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
@@ -34,24 +36,24 @@ export default function DonneesPage() {
   }, []);
 
   const counters = [
-    { label: "Articles (toutes versions)", value: stats?.articles },
-    { label: "Articles en vigueur", value: stats?.articles_en_vigueur },
-    { label: "Liens du graphe des normes", value: stats?.links },
-    { label: "Textes du Journal officiel", value: stats?.jo_texts },
-    { label: "Actes locaux en mémoire", value: stats?.local_acts },
-    { label: "Analyses", value: stats?.analyses },
-    { label: "Alertes produites", value: stats?.findings },
-    { label: "Retours de juristes", value: stats?.feedback },
+    { label: t("app.donnees.articles"), value: stats?.articles },
+    { label: t("app.donnees.articlesVigueur"), value: stats?.articles_en_vigueur },
+    { label: t("app.donnees.links"), value: stats?.links },
+    { label: t("app.donnees.joTexts"), value: stats?.jo_texts },
+    { label: t("app.donnees.localActs"), value: stats?.local_acts },
+    { label: t("app.donnees.analyses"), value: stats?.analyses },
+    { label: t("app.donnees.findings"), value: stats?.findings },
+    { label: t("app.donnees.feedback"), value: stats?.feedback },
   ];
 
   return (
-    <div className="fl-container pt-12">
-      <p className="fl-eyebrow">Couche de données</p>
+    <div className="fl-container pt-12 pb-24">
+      <p className="fl-eyebrow">{t("app.donnees.eyebrow")}</p>
       <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <h1 className="max-w-[20ch] text-[clamp(30px,4vw,48px)] tracking-[-0.035em]">Ce que les agents lisent, en direct</h1>
+        <h1 className="max-w-[20ch] text-[clamp(30px,4vw,48px)] tracking-[-0.035em]">{t("app.donnees.title")}</h1>
         <span className={`fl-badge self-start md:self-auto ${error ? "bg-red/10 text-red-deep" : "bg-ok/10 text-ok"}`}>
           <span className={`size-1.5 rounded-full ${error ? "bg-red" : "bg-ok fl-pulse"}`} />
-          {error ? "base injoignable" : updatedAt ? `à jour ${updatedAt.toLocaleTimeString("fr-FR")}` : "connexion…"}
+          {error ? t("app.donnees.unreachable") : updatedAt ? t("app.donnees.updated", { time: updatedAt.toLocaleTimeString(locale) }) : t("app.donnees.connecting")}
         </span>
       </div>
 
@@ -64,12 +66,12 @@ export default function DonneesPage() {
         ))}
       </div>
       <p className="mt-3 text-[13px] text-muted">
-        Dernier Journal officiel ingéré : {stats?.last_jo_date ? new Date(stats.last_jo_date).toLocaleDateString("fr-FR") : "—"}
+        {t("app.donnees.lastJo", { date: stats?.last_jo_date ? new Date(stats.last_jo_date).toLocaleDateString(locale) : "—" })}
       </p>
 
       <div className="mt-10 grid gap-6 lg:grid-cols-[1fr_1.4fr]">
         <section className="fl-card overflow-hidden">
-          <h2 className="border-b border-line px-5 py-4 text-[15px] tracking-normal">Codes indexés</h2>
+          <h2 className="border-b border-line px-5 py-4 text-[15px] tracking-normal">{t("app.donnees.codes")}</h2>
           <table className="w-full text-[14px]">
             <tbody>
               {(stats?.codes ?? []).map((code) => (
@@ -84,7 +86,7 @@ export default function DonneesPage() {
               ))}
               {!stats?.codes?.length && (
                 <tr>
-                  <td className="px-5 py-8 text-center text-muted">Aucun code indexé pour l&apos;instant.</td>
+                  <td className="px-5 py-8 text-center text-muted">{t("app.donnees.noCodes")}</td>
                 </tr>
               )}
             </tbody>
@@ -93,24 +95,24 @@ export default function DonneesPage() {
 
         <section className="overflow-hidden rounded-[16px] bg-[#0a0a0a] text-white">
           <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
-            <h2 className="text-[15px] tracking-normal text-white">Journal des requêtes en direct</h2>
+            <h2 className="text-[15px] tracking-normal text-white">{t("app.donnees.queryLog")}</h2>
             <span className="fl-mono text-[11px] text-white/40">query_log</span>
           </div>
           <ol className="fl-mono max-h-[520px] overflow-y-auto px-5 py-3 text-[12px] leading-relaxed">
             {(stats?.recent_queries ?? []).map((q, i) => (
               <li key={`${q.ts}-${i}`} className="grid grid-cols-[64px_1fr] gap-3 border-b border-white/5 py-2 last:border-0 sm:grid-cols-[64px_96px_1fr_auto]">
-                <span className="text-white/40">{new Date(q.ts).toLocaleTimeString("fr-FR")}</span>
+                <span className="text-white/40">{new Date(q.ts).toLocaleTimeString(locale)}</span>
                 <span className="text-[#ff6b6b] max-sm:hidden">{q.actor}</span>
                 <span className="min-w-0 break-words text-white/85">
                   <span className="text-white/50">{q.kind} · </span>
                   {q.detail}
                 </span>
                 <span className="text-right text-white/40 max-sm:col-start-2 max-sm:text-left">
-                  {q.rows} lignes · {q.ms} ms
+                  {t("app.donnees.rows", { n: q.rows, ms: q.ms })}
                 </span>
               </li>
             ))}
-            {!stats?.recent_queries?.length && <li className="py-8 text-center text-white/40">Aucune requête pour l&apos;instant.</li>}
+            {!stats?.recent_queries?.length && <li className="py-8 text-center text-white/40">{t("app.donnees.noQueries")}</li>}
           </ol>
         </section>
       </div>

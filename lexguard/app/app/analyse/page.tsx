@@ -1,18 +1,19 @@
 "use client";
 
+// Espace Analyse : on dépose un document (ou un dossier), les agents le contrôlent aussitôt
+// (globe animé), puis les résultats s'affichent. Pas de saisie ni de questions.
 import { AnimatePresence, motion } from "motion/react";
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { createContext, Suspense, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { AGENT_STYLE, SEVERITY_LABEL, VERDICT_STYLE } from "@/components/agent-style";
-import { Arrow } from "@/components/ui/arrow";
-import type { AgentEvent, Analysis, Finding, Verdict } from "@/lib/types";
-import type { ModalCheckResult, ModalFinding } from "@/lib/agents/modal-client";
+import { AGENT_STYLE, agentLabel, severityLabel, VERDICT_STYLE, verdictLabel } from "@/components/agent-style";
+import { type Document, DocumentDrop, modeLabel } from "@/components/document-drop";
+import { AgentWork, FolderIcon } from "@/components/agent-work";
+import { BrickMascot } from "@/components/brick-mascot";
+import { useI18n } from "@/components/lang-provider";
+import { ArticleViewer, type ViewerTarget } from "@/components/article-viewer";
+import { MODEL_CHOICES, type AgentEvent, type Analysis, type Finding, type Mode, type ModelId, type Verdict } from "@/lib/types";
 
-const EXAMPLE = {
-  title: "Arrêté n° 2026-045 — produits phytopharmaceutiques et tranquillité publique",
-  collectivite: "Commune de Saint-Exemple (35)",
-  date: "2026-10-22",
-  text: `RÉPUBLIQUE FRANÇAISE — COMMUNE DE SAINT-EXEMPLE
+const EXAMPLE = `RÉPUBLIQUE FRANÇAISE — COMMUNE DE SAINT-EXEMPLE
 
 ARRÊTÉ MUNICIPAL N° 2026-045
 portant réglementation de l'utilisation des produits phytopharmaceutiques, de la consommation d'alcool sur la voie publique et du brûlage des déchets verts
@@ -37,53 +38,82 @@ Article 3 — Le brûlage à l'air libre des déchets verts produits par les par
 
 Article 4 — Les infractions au présent arrêté seront constatées par procès-verbal et punies de l'amende prévue pour les contraventions de première classe.
 
-Article 5 — Le présent arrêté peut faire l'objet d'un recours devant le tribunal administratif de Rennes dans un délai de deux mois à compter de sa publication.
-
 Fait à Saint-Exemple, le 22 octobre 2026.
-Le Maire`,
-};
+Le Maire`;
 
-type Phase = "saisie" | "analyse" | "termine" | "modal";
+type Phase = "vide" | "lancement" | "analyse" | "termine";
+
+// Cadrage appliqué d'office (plus de questions) : droit en vigueur, France + UE.
+const CADRAGE = { periode: "Droit en vigueur aujourd'hui", perimetre: "France + droit de l'UE" };
+// Un dossier peut contenir beaucoup d'actes : on en contrôle au plus 10 par dépôt (coût des modèles).
+const MAX_PAR_DEPOT = 10;
+
+interface ConversationItem {
+  id: string;
+  title: string;
+  mode?: Mode;
+  status: Analysis["status"];
+  created_at: string;
+}
+
+// Ouvre le panneau « source » depuis n'importe quelle carte d'alerte.
+const OpenSource = createContext<(t: ViewerTarget) => void>(() => {});
 
 export default function AnalysePage() {
+  const [source, setSource] = useState<ViewerTarget | null>(null);
+  const close = useCallback(() => setSource(null), []);
   return (
-    <Suspense>
-      <AnalyseView />
-    </Suspense>
+    <OpenSource.Provider value={setSource}>
+      <Suspense>
+        <ChatView />
+      </Suspense>
+      <ArticleViewer target={source} onClose={close} />
+    </OpenSource.Provider>
   );
 }
 
-function AnalyseView() {
-  // Reprise d'une analyse via ?id=… (lien partageable).
+function ChatView() {
+  const { t } = useI18n();
   const initialId = useSearchParams().get("id");
-  const [title, setTitle] = useState("");
-  const [collectivite, setCollectivite] = useState("");
-  const [dateActe, setDateActe] = useState("");
-  const [input, setInput] = useState("");
-  const [phase, setPhase] = useState<Phase>(initialId ? "analyse" : "saisie");
+  const [doc, setDoc] = useState<Document | null>(null);
+  const [model, setModel] = useState<ModelId>("gpt-6-luna");
+  const [mode, setMode] = useState<Mode>("controle");
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [phase, setPhase] = useState<Phase>(initialId ? "analyse" : "vide");
   const [error, setError] = useState<string | null>(null);
   const [analysisId, setAnalysisId] = useState<string | null>(initialId);
-  const [events, setEvents] = useState<AgentEvent[]>([]);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
-  const [modalResult, setModalResult] = useState<ModalCheckResult | null>(null);
-  const [modalBusy, setModalBusy] = useState(false);
+  const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [conversations, setConversations] = useState<ConversationItem[] | null>(null);
+  const [drawer, setDrawer] = useState(false);
   const sourceRef = useRef<EventSource | null>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+
+  const loadConversations = useCallback(async () => {
+    try {
+      const res = await fetch("/api/analyses");
+      if (!res.ok) throw new Error();
+      setConversations(((await res.json()) as { analyses: ConversationItem[] }).analyses);
+    } catch {
+      setConversations([]);
+    }
+  }, []);
 
   const loadResult = useCallback(async (id: string) => {
     try {
       const res = await fetch(`/api/analyses/${id}`);
-      if (!res.ok) throw new Error(`Réponse ${res.status}`);
+      if (!res.ok) throw new Error(t("analyse.err.response", { status: res.status }));
       const data = (await res.json()) as { analysis: Analysis; findings: Finding[] };
       setAnalysis(data.analysis);
       setFindings(data.findings);
       if (data.analysis.status !== "en_cours") setPhase("termine");
       return data.analysis;
     } catch (e) {
-      setError(`Impossible de charger le résultat (${e instanceof Error ? e.message : "erreur réseau"}).`);
+      setError(t("analyse.err.load", { detail: e instanceof Error ? e.message : t("analyse.err.network") }));
       return null;
     }
-  }, []);
+  }, [t]);
 
   const follow = useCallback(
     (id: string) => {
@@ -96,343 +126,409 @@ function AnalyseView() {
           setEvents((prev) => (prev.some((e) => e.id === event.id) ? prev : [...prev, event]));
           if (event.type === "fin") {
             source.close();
-            void loadResult(id);
+            void loadResult(id).then(() => loadConversations());
           }
         } catch {
-          /* ligne SSE non JSON (ping) : ignorée */
+          /* ligne SSE non JSON : ignorée */
         }
       };
       source.onerror = () => {
-        // Le navigateur relance seul ; si la connexion est fermée, on récupère l'état final.
         if (source.readyState === EventSource.CLOSED) void loadResult(id);
       };
     },
-    [loadResult],
+    [loadResult, loadConversations],
+  );
+
+  // Ouverture d'une conversation existante (?id=…) : on rejoue cadrage, étapes et résultats.
+  const openConversation = useCallback(
+    async (id: string) => {
+      sourceRef.current?.close();
+      setError(null);
+      setEvents([]);
+      setFindings([]);
+      setAnalysisId(id);
+      setPhase("analyse");
+      setDrawer(false);
+      window.history.replaceState(null, "", `/app/analyse?id=${id}`);
+      const a = await loadResult(id);
+      if (!a) return;
+      setDoc({ name: a.title, text: a.input });
+      setMode(a.mode ?? "controle");
+      setAnswers(a.cadrage ?? {});
+      follow(id);
+    },
+    [follow, loadResult],
   );
 
   useEffect(() => {
-    const id = initialId;
-    if (!id) return;
-    // Le flux rejoue tous les événements depuis le début : la timeline se reconstruit même pour une analyse terminée.
-    // loadResult ne met l'état à jour qu'après la réponse réseau (asynchrone).
+    // Chargements réseau : l'état n'est mis à jour qu'à la réponse.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadResult(id).then(() => follow(id));
+    void loadConversations();
+    if (initialId) void openConversation(initialId);
     return () => sourceRef.current?.close();
-  }, [initialId, follow, loadResult]);
+  }, [initialId, loadConversations, openConversation]);
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    if (input.trim().length < 40) {
-      setError("Collez le texte complet de l'acte (au moins quelques lignes).");
-      return;
-    }
-    setEvents([]);
-    setFindings([]);
-    setAnalysis(null);
-    setPhase("analyse");
-    try {
-      const res = await fetch("/api/analyses", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim() || "Acte sans titre",
-          input,
-          collectivite: collectivite.trim() || undefined,
-          date_acte: dateActe || undefined,
-        }),
-      });
-      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `Réponse ${res.status}`);
-      const { id } = (await res.json()) as { id: string };
-      setAnalysisId(id);
-      window.history.replaceState(null, "", `/app/analyse?id=${id}`);
-      follow(id);
-    } catch (err) {
-      setPhase("saisie");
-      setError(`L'analyse n'a pas pu démarrer : ${err instanceof Error ? err.message : "erreur réseau"}.`);
-    }
-  }
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+  }, [phase, findings.length]);
 
-  async function submitModal() {
-    setError(null);
-    if (input.trim().length < 40) {
-      setError("Collez le texte complet de l'acte (au moins quelques lignes).");
-      return;
-    }
-    setModalResult(null);
-    setModalBusy(true);
-    setPhase("modal");
-    try {
-      const res = await fetch("/api/analyses/modal", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ input }),
-      });
-      if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(data?.error || `Réponse ${res.status}`);
-      }
-      setModalResult((await res.json()) as ModalCheckResult);
-    } catch (err) {
-      setPhase("saisie");
-      setError(`L'analyse via Modal a échoué : ${err instanceof Error ? err.message : "erreur réseau"}.`);
-    } finally {
-      setModalBusy(false);
-    }
-  }
-
-  function reset() {
+  function newConversation() {
     sourceRef.current?.close();
-    setPhase("saisie");
-    setEvents([]);
-    setFindings([]);
+    setDoc(null);
+    setAnswers({});
     setAnalysis(null);
+    setFindings([]);
+    setEvents([]);
     setAnalysisId(null);
-    setModalResult(null);
-    setModalBusy(false);
+    setError(null);
+    setPhase("vide");
+    setDrawer(false);
     window.history.replaceState(null, "", "/app/analyse");
   }
 
+  // Documents déposés → une analyse (contrôle) par document, lancée tout de suite.
+  // La première s'affiche ; les autres tournent en fond et apparaissent dans la liste.
+  async function analyse(docs: Document[]) {
+    const batch = docs.slice(0, MAX_PAR_DEPOT);
+    sourceRef.current?.close();
+    setError(null);
+    setDoc(batch[0]);
+    setAnswers(CADRAGE);
+    setMode("controle");
+    setAnalysis(null);
+    setFindings([]);
+    setEvents([]);
+    setAnalysisId(null);
+    setPhase("lancement");
+    window.history.replaceState(null, "", "/app/analyse");
+    try {
+      const ids: string[] = [];
+      for (const d of batch) {
+        const res = await fetch("/api/analyses", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: d.name.slice(0, 300), input: d.text, mode: "controle", model, cadrage: CADRAGE, collectivite: null, date_acte: null }),
+        });
+        if (res.status === 503) {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(body?.error ?? t("analyse.err.noKey"));
+        }
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(t("analyse.err.doc", { name: d.name, detail: body?.error ?? t("analyse.err.response", { status: res.status }) }));
+        }
+        ids.push(((await res.json()) as { id: string }).id);
+        if (ids.length === 1) {
+          setAnalysisId(ids[0]);
+          setPhase("analyse");
+          window.history.replaceState(null, "", `/app/analyse?id=${ids[0]}`);
+          follow(ids[0]);
+        }
+      }
+      if (docs.length > MAX_PAR_DEPOT) setError(t("analyse.err.tooMany", { count: docs.length, max: MAX_PAR_DEPOT }));
+    } catch (e) {
+      setPhase((p) => (p === "lancement" ? "vide" : p));
+      setError(e instanceof Error ? e.message : t("analyse.err.start"));
+    }
+    void loadConversations();
+  }
+
+  const busy = phase === "lancement" || phase === "analyse";
+  const empty = phase === "vide";
+
+  const drop = (compact: boolean) => (
+    <DocumentDrop onDocuments={analyse} onExample={() => analyse([{ name: t("analyse.exampleName"), text: EXAMPLE }])} disabled={busy} model={model} onModel={setModel} compact={compact} />
+  );
+
   return (
-    <div className="fl-container pt-12">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <p className="fl-eyebrow">Contrôle d&apos;un acte</p>
-          <h1 className="mt-3 text-[clamp(30px,4vw,48px)] tracking-[-0.035em]">Vérifier un arrêté avant signature</h1>
-        </div>
-        {phase !== "saisie" && (
-          <button type="button" onClick={reset} className="fl-btn fl-btn--ghost fl-btn--sm self-start md:self-auto">
-            Nouvelle analyse
+    <div className="flex min-h-[calc(100dvh-64px)]">
+      <ConversationList
+        items={conversations}
+        activeId={analysisId}
+        open={drawer}
+        onClose={() => setDrawer(false)}
+        onNew={newConversation}
+        onOpen={openConversation}
+      />
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex items-center gap-2 px-4 pt-4 lg:hidden">
+          <button type="button" onClick={() => setDrawer(true)} className="fl-btn fl-btn--ghost fl-btn--sm" aria-label={t("analyse.openConversations")}>
+            {t("analyse.conversations")}
           </button>
-        )}
-      </div>
+          {!empty && (
+            <button type="button" onClick={newConversation} className="fl-btn fl-btn--ghost fl-btn--sm">
+              {t("analyse.new")}
+            </button>
+          )}
+        </div>
 
-      {error && <div className="mt-6 rounded-[10px] border border-red/30 bg-red/5 px-4 py-3 text-[14px] text-red-deep">{error}</div>}
-
-      {phase === "saisie" ? (
-        <form onSubmit={submit} className="mt-10 grid gap-6 lg:grid-cols-[1fr_320px]">
-          <div className="fl-card p-5 md:p-6">
-            <label className="block text-[13px] font-medium text-body" htmlFor="acte">
-              Texte de l&apos;acte
-            </label>
-            <textarea
-              id="acte"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Collez ici le projet d'arrêté ou de délibération…"
-              className="fl-input mt-2 min-h-[420px] resize-y font-mono text-[13px] leading-relaxed"
-            />
-          </div>
-          <div className="flex flex-col gap-4">
-            <div className="fl-card flex flex-col gap-4 p-5">
-              <Field label="Titre" htmlFor="titre">
-                <input id="titre" className="fl-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Arrêté n° …" />
-              </Field>
-              <Field label="Collectivité" htmlFor="coll">
-                <input id="coll" className="fl-input" value={collectivite} onChange={(e) => setCollectivite(e.target.value)} placeholder="Commune de …" />
-              </Field>
-              <Field label="Date de l'acte" htmlFor="date">
-                <input id="date" type="date" className="fl-input" value={dateActe} onChange={(e) => setDateActe(e.target.value)} />
-              </Field>
-            </div>
-            <button type="submit" className="fl-btn fl-btn--red w-full">
-              Lancer les agents
-              <Arrow size={14} />
-            </button>
-            <button type="button" onClick={submitModal} className="fl-btn fl-btn--ghost w-full">
-              Analyser via Modal ⚡
-            </button>
-            <button
-              type="button"
-              className="fl-btn fl-btn--ghost w-full"
-              onClick={() => {
-                setTitle(EXAMPLE.title);
-                setCollectivite(EXAMPLE.collectivite);
-                setDateActe(EXAMPLE.date);
-                setInput(EXAMPLE.text);
-              }}
-            >
-              Charger un exemple
-            </button>
-            <p className="text-[13px] leading-relaxed text-muted">
-              Cinq agents analysent l&apos;acte : découpage, recherche dans les codes en vigueur, jugement, contradiction, rédaction. Comptez une à trois minutes.
+        {empty ? (
+          <div className="flex flex-1 flex-col items-center justify-center px-4 pb-24">
+            <motion.h1 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="text-center text-[clamp(30px,4.4vw,48px)] font-medium tracking-[-0.035em]">
+              {t("analyse.title")}
+            </motion.h1>
+            <p className="mt-3 max-w-[52ch] text-center text-[15px] text-body">
+              {t("analyse.subtitle")}
             </p>
+            <div className="mt-10 w-full max-w-[760px]">{drop(false)}</div>
+            {error && <div className="mt-6 max-w-[760px] rounded-[12px] border border-red/30 bg-red/5 px-4 py-3 text-[14px] text-red-deep">{error}</div>}
           </div>
-        </form>
-      ) : phase === "modal" ? (
-        <ModalResults result={modalResult} busy={modalBusy} />
-      ) : (
-        <div className="mt-10 grid gap-6 lg:grid-cols-[380px_1fr]">
-          <Timeline events={events} running={phase === "analyse"} />
-          <Results analysis={analysis} findings={findings} running={phase === "analyse"} analysisId={analysisId} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label htmlFor={htmlFor} className="mb-1.5 block text-[13px] font-medium text-body">
-        {label}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-function Timeline({ events, running }: { events: AgentEvent[]; running: boolean }) {
-  const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => endRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), [events.length]);
-
-  return (
-    <aside className="fl-card flex max-h-[78vh] flex-col overflow-hidden lg:sticky lg:top-24">
-      <div className="flex items-center justify-between border-b border-line px-5 py-4">
-        <span className="text-[15px] font-medium">Travail des agents</span>
-        {running ? (
-          <span className="fl-badge fl-pulse bg-red/10 text-red-deep">en cours</span>
         ) : (
-          <span className="fl-badge bg-card text-body">{events.length} étapes</span>
+          <>
+            <div className="mx-auto w-full max-w-[760px] flex-1 px-4 pt-8 pb-10">
+              {doc && <DocumentBubble doc={doc} />}
+
+              {phase === "lancement" && <AssistantTyping label={t("analyse.launching")} />}
+
+              {(phase === "analyse" || phase === "termine") && (
+                <>
+                  <CadrageSummary answers={answers} mode={analysis?.mode ?? mode} model={analysis?.model ?? model} />
+                  <WorkBlock events={events} running={phase === "analyse"} />
+                  {phase === "termine" && <Results analysis={analysis} findings={findings} />}
+                </>
+              )}
+
+              {error && <div className="mt-6 rounded-[12px] border border-red/30 bg-red/5 px-4 py-3 text-[14px] text-red-deep">{error}</div>}
+              <div ref={endRef} />
+            </div>
+            <div className="sticky bottom-0 bg-gradient-to-t from-white via-white to-white/0 px-4 pt-6 pb-5">
+              <div className="mx-auto max-w-[760px]">{drop(true)}</div>
+            </div>
+          </>
         )}
       </div>
-      <ol className="flex-1 overflow-y-auto px-5 py-4">
-        {events.length === 0 && <li className="py-6 text-center text-[14px] text-muted">Démarrage des agents…</li>}
-        <AnimatePresence initial={false}>
-          {events.map((event) => {
-            const style = AGENT_STYLE[event.agent] ?? AGENT_STYLE.orchestrateur;
-            return (
-              <motion.li
-                key={event.id}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="relative flex gap-3 pb-3.5 pl-0.5"
-              >
-                <span className={`mt-[7px] size-2 shrink-0 rounded-full ${style.dot}`} />
-                <div className="min-w-0">
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-[13px] font-medium">{style.label}</span>
-                    <span className="fl-mono text-[11px] text-muted">{new Date(event.ts).toLocaleTimeString("fr-FR")}</span>
-                  </div>
-                  <p
-                    className={`text-[13px] leading-snug break-words ${
-                      event.type === "outil" ? "fl-mono text-[12px] text-muted" : event.type === "rejet" || event.type === "erreur" ? "text-red-deep" : "text-body"
-                    }`}
-                  >
-                    {event.message}
-                  </p>
-                </div>
-              </motion.li>
-            );
-          })}
-        </AnimatePresence>
-        <div ref={endRef} />
-      </ol>
-    </aside>
-  );
-}
-
-const ORDER: Verdict[] = ["conflit", "incompetence", "vide", "doublon", "conforme"];
-
-function Results({ analysis, findings, running, analysisId }: { analysis: Analysis | null; findings: Finding[]; running: boolean; analysisId: string | null }) {
-  if (running && !analysis?.summary) {
-    return (
-      <section className="flex min-h-[320px] flex-col items-center justify-center rounded-[16px] bg-warm px-6 text-center">
-        <span className="size-3 rounded-full bg-red fl-pulse" />
-        <p className="mt-5 text-[17px]">Les agents examinent l&apos;acte…</p>
-        <p className="mt-2 max-w-[42ch] text-[14px] text-body">Les alertes apparaîtront ici, chacune avec l&apos;article exact et son extrait vérifié.</p>
-      </section>
-    );
-  }
-
-  if (analysis?.status === "erreur") {
-    return (
-      <section className="rounded-[16px] border border-red/30 bg-red/5 p-6 text-red-deep">
-        L&apos;analyse a échoué. Consultez le journal des agents pour le détail{analysisId ? ` (analyse ${analysisId.slice(0, 8)})` : ""}.
-      </section>
-    );
-  }
-
-  const sorted = [...findings].sort((a, b) => ORDER.indexOf(a.verdict) - ORDER.indexOf(b.verdict));
-  const alerts = sorted.filter((f) => f.verdict !== "conforme" && !f.rejection_reason);
-  const others = sorted.filter((f) => f.verdict === "conforme" || f.rejection_reason);
-  const summary = analysis?.summary;
-
-  return (
-    <section className="flex flex-col gap-5">
-      {summary && (
-        <div className="fl-card p-6">
-          <p className="fl-eyebrow">Synthèse</p>
-          <p className="mt-3 text-[20px] leading-snug tracking-[-0.015em]">{summary.headline}</p>
-          <div className="mt-5 flex flex-wrap gap-2">
-            {ORDER.map((v) =>
-              summary.counts?.[v] ? (
-                <span key={v} className={`fl-badge ${VERDICT_STYLE[v].className}`}>
-                  {summary.counts[v]} {VERDICT_STYLE[v].label.toLowerCase()}
-                </span>
-              ) : null,
-            )}
-            {summary.rejected > 0 && <span className="fl-badge bg-card text-body">{summary.rejected} écartée(s) par le contradicteur</span>}
-          </div>
-          <div className="mt-5 grid grid-cols-3 gap-3 border-t border-line pt-4 text-[13px] text-body">
-            <Metric label="Articles consultés" value={String(summary.articles_consulted ?? "—")} />
-            <Metric label="Durée" value={analysis?.latency_ms != null ? `${Math.round(analysis.latency_ms / 1000)} s` : "—"} />
-            <Metric label="Coût" value={analysis?.cost_usd != null ? `${Number(analysis.cost_usd).toFixed(2)} $` : "—"} />
-          </div>
-        </div>
-      )}
-
-      {alerts.length === 0 && !running && (
-        <div className="rounded-[16px] bg-warm p-6 text-[15px] text-body">Aucune alerte retenue : l&apos;acte paraît conforme au droit en vigueur consulté.</div>
-      )}
-      {alerts.map((finding) => (
-        <FindingCard key={finding.id} finding={finding} />
-      ))}
-
-      {others.length > 0 && (
-        <details className="rounded-[16px] border border-line p-5">
-          <summary className="cursor-pointer text-[14px] font-medium text-body">
-            {others.length} disposition(s) conforme(s) ou alerte(s) écartée(s)
-          </summary>
-          <div className="mt-4 flex flex-col gap-4">
-            {others.map((finding) => (
-              <FindingCard key={finding.id} finding={finding} compact />
-            ))}
-          </div>
-        </details>
-      )}
-    </section>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-muted">{label}</div>
-      <div className="mt-0.5 text-[16px] font-medium text-ink tabular-nums">{value}</div>
     </div>
   );
 }
 
-function FindingCard({ finding, compact = false }: { finding: Finding; compact?: boolean }) {
+// ---------- Fil de conversation ----------
+
+function DocumentBubble({ doc }: { doc: Document }) {
+  const excerpt = doc.text.trim().slice(0, 280);
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[85%] rounded-[20px] rounded-br-[6px] bg-card px-4 py-3 text-ink">
+        <p className="flex items-center gap-2 text-[15px] font-medium">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0 text-red">
+            <path d="M7 3h7l5 5v13H7z M14 3v5h5" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+          </svg>
+          <span className="break-all">{doc.name}</span>
+        </p>
+        <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-muted">
+          {excerpt}
+          {doc.text.length > excerpt.length && "…"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function AssistantAvatar() {
+  return (
+    <span className="grid size-8 shrink-0 place-items-center" aria-hidden="true">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+        <path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6l-8-3Z" fill="#ff2e2e" />
+        <path d="m8.5 12 2.5 2.5 4.5-5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </span>
+  );
+}
+
+function AssistantTyping({ label }: { label: string }) {
+  return (
+    <div className="mt-6 flex items-center gap-3">
+      <AssistantAvatar />
+      <span className="flex items-center gap-1.5 text-[14px] text-body">
+        {label}
+        <span className="size-1.5 rounded-full bg-red fl-pulse" />
+      </span>
+    </div>
+  );
+}
+
+function CadrageSummary({ answers, mode, model }: { answers: Record<string, string>; mode: Mode; model: ModelId }) {
+  const { t } = useI18n();
+  const values = Object.values(answers).filter(Boolean);
+  return (
+    <div className="mt-6 flex gap-3">
+      <AssistantAvatar />
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5 pt-1">
+        <span className="fl-badge bg-red/10 text-red-deep">{modeLabel(t, mode)}</span>
+        <span className="fl-badge bg-card text-body">{MODEL_CHOICES.find((c) => c.id === model)?.label ?? model}</span>
+        {values.map((v) => (
+          <span key={v} className="fl-badge bg-card text-body">
+            {v === CADRAGE.periode ? t("analyse.cadrage.period") : v === CADRAGE.perimetre ? t("analyse.cadrage.scope") : v}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WorkBlock({ events, running }: { events: AgentEvent[]; running: boolean }) {
+  const { t, lang } = useI18n();
+  return (
+    <div className="mt-6 flex gap-3">
+      <AssistantAvatar />
+      <div className="min-w-0 flex-1">
+        <AnimatePresence initial={false}>
+          {running && (
+            <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, height: 0 }} className="flex flex-col items-center rounded-[20px] bg-warm px-4 pt-6 pb-5">
+              <AgentWork events={events} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <Disclosure
+          className="mt-3 px-4 py-3"
+          title={
+            <>
+              <FolderIcon open={running} size={18} />
+              {running ? t("analyse.work.live") : t("analyse.work.title")} · {t(events.length > 1 ? "analyse.work.steps" : "analyse.work.step", { n: events.length })}
+            </>
+          }
+        >
+          <ol className="mt-3 flex max-h-[360px] flex-col gap-2.5 overflow-y-auto pr-1">
+            {events.map((event) => {
+              return (
+                <li key={event.id} className="flex gap-2.5">
+                  <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-red/70" />
+                  <div className="min-w-0">
+                    <span className="text-[12px] font-medium">{agentLabel(t, event.agent in AGENT_STYLE ? event.agent : "orchestrateur")}</span>
+                    <span className="fl-mono ml-2 text-[11px] text-muted">{new Date(event.ts).toLocaleTimeString(lang === "en" ? "en-GB" : "fr-FR")}</span>
+                    <p className={`text-[13px] leading-snug break-words ${event.type === "outil" ? "fl-mono text-[12px] text-muted" : event.type === "rejet" || event.type === "erreur" ? "text-red-deep" : "text-body"}`}>
+                      {event.message}
+                    </p>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </Disclosure>
+      </div>
+    </div>
+  );
+}
+
+/** Bloc repliable : le contenu se déplie en hauteur au lieu d'apparaître d'un coup. */
+function Disclosure({ title, className = "", children }: { title: React.ReactNode; className?: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`rounded-[14px] border border-line ${className}`}>
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 text-left text-[13px] font-medium text-body hover:text-ink">
+        <motion.svg animate={{ rotate: open ? 90 : 0 }} width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0 text-muted">
+          <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+        </motion.svg>
+        {title}
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            {children}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+const ORDER: Verdict[] = ["conflit", "incompetence", "forme", "vide", "doublon", "existant", "conforme"];
+
+function Results({ analysis, findings }: { analysis: Analysis | null; findings: Finding[] }) {
+  const { t } = useI18n();
+  if (!analysis) return null;
+  if (analysis.status === "erreur") {
+    return <div className="mt-6 ml-11 rounded-[14px] border border-red/30 bg-red/5 p-5 text-[14px] text-red-deep">{t("analyse.failed")}</div>;
+  }
+  const exploration = analysis.mode === "exploration";
+  const sorted = [...findings].sort((a, b) => ORDER.indexOf(a.verdict) - ORDER.indexOf(b.verdict));
+  const main = sorted.filter((f) => f.verdict !== "conforme" && !f.rejection_reason);
+  const others = sorted.filter((f) => !main.includes(f));
+  const summary = analysis.summary;
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-6 flex gap-3">
+      <AssistantAvatar />
+      <div className="min-w-0 flex-1">
+        {summary && (
+          <div>
+            <p className="text-[17px] leading-relaxed text-ink">{summary.headline}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {ORDER.filter((v) => summary.counts?.[v]).map((v, i) => (
+                <motion.span
+                  key={v}
+                  initial={{ opacity: 0, scale: 0.6 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.15 + i * 0.07, type: "spring", stiffness: 400, damping: 18 }}
+                  className={`fl-badge ${VERDICT_STYLE[v].className}`}
+                >
+                  {summary.counts[v]} {verdictLabel(t, v).toLowerCase()}
+                </motion.span>
+              ))}
+              {summary.rejected > 0 && <span className="fl-badge bg-card text-body">{t("analyse.rejectedByChallenger", { n: summary.rejected })}</span>}
+              <span className="fl-badge bg-card text-body">{t("analyse.articlesConsulted", { n: summary.articles_consulted ?? "—" })}</span>
+              {analysis.latency_ms != null && <span className="fl-badge bg-card text-body">{Math.round(analysis.latency_ms / 1000)} s</span>}
+              {analysis.cost_usd != null && <span className="fl-badge bg-card text-body">{Number(analysis.cost_usd).toFixed(2)} $</span>}
+            </div>
+          </div>
+        )}
+
+        {exploration && main.length > 0 && <p className="mt-6 fl-eyebrow">{t("analyse.alreadyExists")}</p>}
+        {main.length === 0 && (
+          <div className="mt-5 rounded-[14px] bg-warm p-5 text-[14px] text-body">
+            {exploration ? t("analyse.none.exploration") : t("analyse.none.control")}
+          </div>
+        )}
+        <div className="mt-4 flex flex-col gap-4">
+          {main.map((f, i) => (
+            <FindingCard key={f.id} finding={f} index={i} />
+          ))}
+        </div>
+
+        {others.length > 0 && (
+          <Disclosure className="mt-4 p-4" title={t("analyse.others", { n: others.length })}>
+            <div className="mt-3 flex flex-col gap-3">
+              {others.map((f) => (
+                <FindingCard key={f.id} finding={f} compact />
+              ))}
+            </div>
+          </Disclosure>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+function FindingCard({ finding, compact = false, index = 0 }: { finding: Finding; compact?: boolean; index?: number }) {
+  const { t } = useI18n();
+  const openSource = useContext(OpenSource);
   const [feedback, setFeedback] = useState<"valide" | "rejete" | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState("");
   const [sending, setSending] = useState(false);
   const [feedbackError, setFeedbackError] = useState(false);
-  const verdict = VERDICT_STYLE[finding.verdict];
+  const verdict = VERDICT_STYLE[finding.verdict] ?? VERDICT_STYLE.conforme;
+  const informative = finding.verdict === "existant" || finding.verdict === "conforme";
 
   async function send(decision: "valide" | "rejete") {
-    let reason: string | undefined;
-    if (decision === "rejete") reason = window.prompt("Pourquoi est-ce un faux positif ? (facultatif)") ?? undefined;
     setSending(true);
     setFeedbackError(false);
     try {
       const res = await fetch("/api/feedback", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ finding_id: finding.id, decision, reason }),
+        body: JSON.stringify({ finding_id: finding.id, decision, reason: decision === "rejete" ? reason.trim() || undefined : undefined }),
       });
       if (!res.ok) throw new Error();
       setFeedback(decision);
+      setAsking(false);
     } catch {
       setFeedbackError(true);
     } finally {
@@ -441,151 +537,241 @@ function FindingCard({ finding, compact = false }: { finding: Finding; compact?:
   }
 
   return (
-    <motion.article initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`fl-card ${compact ? "p-5 shadow-none" : "p-6"}`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className={`fl-badge ${verdict.className}`}>{verdict.label}</span>
-        {finding.verdict !== "conforme" && <span className="fl-badge bg-card text-body">{SEVERITY_LABEL[finding.severity]}</span>}
-        {finding.verified && !finding.rejection_reason && (
-          <span className="fl-badge bg-ok/10 text-ok">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Citations vérifiées
-          </span>
-        )}
-        {finding.rejection_reason && <span className="fl-badge bg-card text-muted">Écartée</span>}
-      </div>
-
-      <h3 className={`mt-4 leading-snug tracking-[-0.02em] ${compact ? "text-[17px]" : "text-[21px]"}`}>{finding.title}</h3>
-      <blockquote className="mt-3 border-l-2 border-line-2 pl-3 text-[13px] italic text-muted">{finding.disposition.text}</blockquote>
-      <p className="mt-4 text-[15px] leading-relaxed text-body">{finding.explanation}</p>
-
-      {finding.rejection_reason && (
-        <p className="mt-3 rounded-[10px] bg-card px-3 py-2 text-[13px] text-body">Motif du rejet : {finding.rejection_reason}</p>
+    <motion.article
+      layout
+      initial={{ opacity: 0, y: 18, scale: 0.98 }}
+      animate={{ opacity: feedback === "rejete" ? 0.62 : 1, y: 0, scale: 1, x: 0 }}
+      transition={{ delay: compact ? 0 : 0.2 + index * 0.09, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+      className={`relative overflow-hidden rounded-[16px] border bg-white ${compact ? "p-4" : "p-5 shadow-[var(--shadow-sm)]"} ${
+        feedback === "valide" ? "border-red/40" : "border-line"
+      }`}
+    >
+      {!informative && !compact && (
+        <motion.span
+          aria-hidden="true"
+          initial={{ scaleY: 0 }}
+          animate={{ scaleY: 1 }}
+          transition={{ delay: 0.35 + index * 0.09, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          className="absolute top-0 bottom-0 left-0 w-[3px] origin-top bg-gradient-to-b from-[#ff2e2e] to-[#ff7a2e]"
+        />
       )}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`fl-badge ${verdict.className}`}>{verdictLabel(t, VERDICT_STYLE[finding.verdict] ? finding.verdict : "conforme")}</span>
+        {!informative && <span className="fl-badge bg-card text-body">{severityLabel(t, finding.severity)}</span>}
+        {finding.verified && !finding.rejection_reason && <span className="fl-badge bg-red/10 text-red-deep">{t("analyse.citationsVerified")}</span>}
+        {finding.rejection_reason && <span className="fl-badge bg-card text-muted">{t("analyse.dismissed")}</span>}
+      </div>
+      <h3 className={`mt-3 leading-snug tracking-[-0.02em] ${compact ? "text-[15px]" : "text-[18px]"} ${feedback === "rejete" ? "line-through decoration-red/50" : ""}`}>{finding.title}</h3>
+      {finding.disposition?.text && finding.verdict !== "existant" && (
+        <blockquote className="mt-2 border-l-2 border-line-2 pl-3 text-[13px] italic text-muted">{finding.disposition.text}</blockquote>
+      )}
+      <p className="mt-3 text-[14px] leading-relaxed text-body">{finding.explanation}</p>
+      {finding.rejection_reason && <p className="mt-3 rounded-[10px] bg-card px-3 py-2 text-[13px] text-body">{t("analyse.rejectionReason", { reason: finding.rejection_reason })}</p>}
 
       {finding.citations.length > 0 && (
-        <div className="mt-5 flex flex-col gap-2.5">
-          {finding.citations.map((citation) => (
-            <a
-              key={`${citation.article_id}-${citation.quote.slice(0, 20)}`}
-              href={citation.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group block rounded-[10px] border border-line bg-warm px-4 py-3 transition-colors hover:border-line-2 hover:bg-white"
+        <div className="mt-4 flex flex-col gap-2">
+          {finding.citations.map((c, ci) => (
+            <motion.button
+              type="button"
+              key={`${c.article_id}-${c.quote.slice(0, 20)}`}
+              onClick={() => openSource({ articleId: c.article_id, quote: c.quote })}
+              initial={{ opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: (compact ? 0 : 0.4 + index * 0.09) + ci * 0.06 }}
+              whileHover={{ x: 3 }}
+              className="group block w-full rounded-[10px] border border-line bg-warm px-3.5 py-2.5 text-left transition-colors hover:border-red/30 hover:bg-white"
             >
               <div className="flex items-center justify-between gap-3">
-                <span className="text-[13px] font-medium">
-                  Art. {citation.num} · <span className="text-body">{citation.code}</span>
+                <span className="flex items-center gap-2 text-[13px] font-medium">
+                  <FolderIcon size={16} />
+                  {t("analyse.art", { num: c.num.replace(/^art\.?\s*/i, "") })} · <span className="text-body">{c.code}</span>
                 </span>
-                <span className="fl-mono shrink-0 text-[11px] text-muted group-hover:text-red">Légifrance ↗</span>
+                <span className="fl-mono shrink-0 text-[11px] text-muted group-hover:text-red">{t("analyse.viewSource")}</span>
               </div>
-              <p className="mt-1.5 text-[13px] leading-relaxed text-body">« {citation.quote} »</p>
-            </a>
+              <p className="mt-1 text-[13px] leading-relaxed text-body">« {c.quote} »</p>
+            </motion.button>
           ))}
         </div>
       )}
 
-      {finding.suggestion && !compact && (
-        <div className="mt-5 rounded-[10px] border border-ok/25 bg-ok/5 px-4 py-3">
-          <p className="text-[12px] font-medium uppercase tracking-[0.04em] text-ok">Rédaction proposée</p>
-          <p className="mt-1.5 text-[14px] leading-relaxed text-ink">{finding.suggestion}</p>
-        </div>
-      )}
+      {finding.suggestion && !compact && <Suggestion text={finding.suggestion} label={informative ? t("analyse.keep") : t("analyse.proposed")} delay={0.55 + index * 0.09} />}
 
       {!compact && (
-        <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-line pt-4">
-          {feedback ? (
-            <span className="text-[13px] text-body">
-              {feedback === "valide" ? "Merci : alerte confirmée, ajoutée à la doctrine interne." : "Merci : faux positif enregistré, les agents en tiendront compte."}
-            </span>
-          ) : (
-            <>
-              <span className="mr-1 text-[13px] text-muted">Cette alerte est-elle juste ?</span>
-              <button type="button" disabled={sending} onClick={() => send("valide")} className="fl-btn fl-btn--ghost fl-btn--sm">
-                ✓ Pertinent
-              </button>
-              <button type="button" disabled={sending} onClick={() => send("rejete")} className="fl-btn fl-btn--ghost fl-btn--sm">
-                ✗ Faux positif
-              </button>
-              {feedbackError && <span className="text-[13px] text-red-deep">Envoi impossible, réessayez.</span>}
-            </>
-          )}
+        <div className="mt-4 border-t border-line pt-3">
+          <AnimatePresence mode="wait" initial={false}>
+            {feedback ? (
+              <motion.div key="merci" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-2.5 text-[13px] text-body">
+                {feedback === "valide" ? <FiledFolder /> : <BrickMascot size={18} idle />}
+                {feedback === "valide" ? t("analyse.fb.filed") : t("analyse.fb.recorded")}
+              </motion.div>
+            ) : asking ? (
+              <motion.form
+                key="motif"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void send("rejete");
+                }}
+                className="flex flex-wrap items-center gap-2"
+              >
+                <input
+                  autoFocus
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder={t("analyse.fb.placeholder")}
+                  className="h-9 min-w-[220px] flex-1 rounded-full border border-line-2 px-4 text-[13px] outline-none focus:border-red/40"
+                />
+                <button type="submit" disabled={sending} className="fl-btn fl-btn--red fl-btn--sm">
+                  {sending ? t("analyse.fb.sending") : t("analyse.fb.send")}
+                </button>
+                <button type="button" onClick={() => setAsking(false)} className="text-[13px] text-muted hover:text-ink">
+                  {t("analyse.fb.cancel")}
+                </button>
+              </motion.form>
+            ) : (
+              <motion.div key="choix" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, y: -4 }} className="flex flex-wrap items-center gap-2">
+                <span className="mr-1 text-[13px] text-muted">{informative ? t("analyse.fb.useful") : t("analyse.fb.isRight")}</span>
+                <motion.button whileTap={{ scale: 0.92 }} type="button" disabled={sending} onClick={() => send("valide")} className="fl-btn fl-btn--ghost fl-btn--sm hover:border-red/40 hover:text-red-deep">
+                  {t("analyse.fb.relevant")}
+                </motion.button>
+                <motion.button
+                  whileTap={{ scale: 0.92 }}
+                  type="button"
+                  disabled={sending}
+                  onClick={() => setAsking(true)}
+                  className="fl-btn fl-btn--ghost fl-btn--sm hover:border-red/40 hover:text-red-deep"
+                >
+                  {t("analyse.fb.falsePositive")}
+                </motion.button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          {feedbackError && <p className="mt-2 text-[13px] text-red-deep">{t("analyse.fb.failed")}</p>}
         </div>
       )}
     </motion.article>
   );
 }
 
-// Rendu du résultat du moteur Python exécuté sur Modal (schéma agents/orchestrator.py).
-const MODAL_VERDICT: Record<ModalFinding["type"], { label: string; className: string }> = {
-  conflit: { label: "Conflit", className: "bg-red/10 text-red-deep" },
-  doublon: { label: "Doublon", className: "bg-card text-body" },
-  vide: { label: "Vide juridique", className: "bg-card text-muted" },
-  compatible: { label: "Compatible", className: "bg-ok/10 text-ok" },
-};
-const MODAL_ORDER: ModalFinding["type"][] = ["conflit", "doublon", "vide", "compatible"];
+/** Rédaction proposée : le cadre se déplie, puis le texte s'écrit mot à mot. */
+function Suggestion({ text, label, delay }: { text: string; label: string; delay: number }) {
+  const words = text.split(/(\s+)/);
+  const step = Math.min(0.03, 1.4 / words.length);
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay, duration: 0.35 }}
+      className="mt-4 rounded-[12px] border border-red/20 bg-gradient-to-br from-[#fff4f1] to-white px-3.5 py-3"
+    >
+      <p className="flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-[0.04em] text-red-deep">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 20h4L19 9l-4-4L4 16v4Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+        </svg>
+        {label}
+      </p>
+      <p className="mt-1 text-[14px] leading-relaxed text-ink">
+        {words.map((w, i) => (
+          <motion.span key={i} initial={{ opacity: 0, filter: "blur(3px)" }} animate={{ opacity: 1, filter: "blur(0px)" }} transition={{ delay: delay + 0.2 + i * step, duration: 0.25 }}>
+            {w}
+          </motion.span>
+        ))}
+      </p>
+    </motion.div>
+  );
+}
 
-function ModalResults({ result, busy }: { result: ModalCheckResult | null; busy: boolean }) {
-  if (busy && !result) {
-    return (
-      <section className="mt-10 flex min-h-[320px] flex-col items-center justify-center rounded-[16px] bg-warm px-6 text-center">
-        <span className="size-3 rounded-full bg-red fl-pulse" />
-        <p className="mt-5 text-[17px]">Analyse exécutée sur Modal ⚡ (agents Python + Keenable)…</p>
-        <p className="mt-2 max-w-[46ch] text-[14px] text-body">Chaque citation est un article réel récupéré sur Légifrance / EUR-Lex, puis vérifié mot pour mot.</p>
-      </section>
-    );
-  }
-  if (!result) return null;
-  const sorted = [...result.findings].sort((a, b) => MODAL_ORDER.indexOf(a.type) - MODAL_ORDER.indexOf(b.type));
+/** « Pertinent » : la feuille ressort du dossier rouge puis y rentre, et le dossier se ferme. */
+function FiledFolder() {
+  const [open, setOpen] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => setOpen(false), 450);
+    return () => clearTimeout(timer);
+  }, []);
+  return (
+    <motion.span initial={{ scale: 0.4, rotate: -12 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: "spring", stiffness: 380, damping: 14 }} className="inline-flex">
+      <FolderIcon open={open} size={22} />
+    </motion.span>
+  );
+}
+
+// ---------- Conversations ----------
+
+function relative(iso: string, lang: string) {
+  const rtf = new Intl.RelativeTimeFormat(lang === "en" ? "en-GB" : "fr", { numeric: "auto" });
+  const minutes = Math.round((new Date(iso).getTime() - Date.now()) / 60_000);
+  if (Math.abs(minutes) < 60) return rtf.format(minutes, "minute");
+  const hours = Math.round(minutes / 60);
+  if (Math.abs(hours) < 24) return rtf.format(hours, "hour");
+  return rtf.format(Math.round(hours / 24), "day");
+}
+
+function ConversationList(props: {
+  items: ConversationItem[] | null;
+  activeId: string | null;
+  open: boolean;
+  onClose: () => void;
+  onNew: () => void;
+  onOpen: (id: string) => void;
+}) {
+  const { items, activeId, open, onClose, onNew, onOpen } = props;
+  const { t, lang } = useI18n();
+  const list = (
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between px-3 pt-4 pb-2">
+        <span className="fl-eyebrow">{t("analyse.conversations")}</span>
+        <button type="button" onClick={onClose} className="text-[13px] text-muted hover:text-ink lg:hidden" aria-label={t("analyse.close")}>
+          {t("analyse.close")}
+        </button>
+      </div>
+      <button type="button" onClick={onNew} className="mx-2 mb-2 flex items-center gap-2 rounded-[10px] px-3 py-2.5 text-[14px] font-medium text-ink transition-colors hover:bg-card">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+        {t("analyse.newConversation")}
+      </button>
+      <nav className="flex-1 overflow-y-auto px-2 pb-6" aria-label={t("analyse.pastConversations")}>
+        {items === null && <p className="px-3 py-2 text-[13px] text-muted">{t("analyse.loading")}</p>}
+        {items?.length === 0 && <p className="px-3 py-2 text-[13px] text-muted">{t("analyse.noConversations")}</p>}
+        {items?.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => onOpen(c.id)}
+            className={`block w-full rounded-[10px] px-3 py-2.5 text-left transition-colors ${c.id === activeId ? "bg-card" : "hover:bg-warm"}`}
+          >
+            <span className="line-clamp-2 text-[13.5px] leading-snug text-ink">{c.title}</span>
+            <span className="mt-1 flex items-center gap-1.5 text-[11.5px] text-muted">
+              <span className={`size-1.5 rounded-full ${c.status === "termine" ? "bg-ok" : c.status === "erreur" ? "bg-red" : "bg-orange fl-pulse"}`} />
+              {c.mode ? modeLabel(t, c.mode) : t("analyse.mode.default")} · {relative(c.created_at, lang)}
+            </span>
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
 
   return (
-    <section className="mt-10 flex flex-col gap-5">
-      <div className="fl-card p-6">
-        <div className="flex items-center justify-between gap-3">
-          <p className="fl-eyebrow">Synthèse · exécutée sur Modal ⚡</p>
-          {result.rejected_citations > 0 && <span className="fl-badge bg-card text-body">{result.rejected_citations} citation(s) écartée(s)</span>}
-        </div>
-        <p className="mt-3 text-[18px] leading-snug tracking-[-0.015em]">{result.summary}</p>
-      </div>
-
-      {sorted.length === 0 && <div className="rounded-[16px] bg-warm p-6 text-[15px] text-body">Aucune obligation vérifiable n&apos;a été détectée.</div>}
-
-      {sorted.map((finding, i) => {
-        const verdict = MODAL_VERDICT[finding.type];
-        return (
-          <motion.article key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="fl-card p-6">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`fl-badge ${verdict.className}`}>{verdict.label}</span>
-              <span className="fl-badge bg-card text-body">confiance {Math.round(finding.confidence * 100)} %</span>
-            </div>
-            <h3 className="mt-4 text-[21px] leading-snug tracking-[-0.02em]">{finding.obligation}</h3>
-            <p className="mt-4 text-[15px] leading-relaxed text-body">{finding.explanation}</p>
-            {finding.citations.length > 0 && (
-              <div className="mt-5 flex flex-col gap-2.5">
-                {finding.citations.map((citation, j) => (
-                  <a
-                    key={j}
-                    href={citation.url ?? "#"}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="group block rounded-[10px] border border-line bg-warm px-4 py-3 transition-colors hover:border-line-2 hover:bg-white"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-[13px] font-medium">
-                        {citation.ref}
-                        {citation.version_date ? <span className="text-muted"> · {citation.version_date}</span> : null}
-                      </span>
-                      <span className="fl-mono shrink-0 text-[11px] text-muted group-hover:text-red">source ↗</span>
-                    </div>
-                    {citation.excerpt && <p className="mt-1.5 text-[13px] leading-relaxed text-body">« {citation.excerpt} »</p>}
-                  </a>
-                ))}
-              </div>
-            )}
-          </motion.article>
-        );
-      })}
-    </section>
+    <>
+      <aside className="sticky top-16 hidden h-[calc(100dvh-64px)] w-[264px] shrink-0 border-r border-line bg-warm/60 lg:block">{list}</aside>
+      <AnimatePresence>
+        {open && (
+          <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-40 bg-black/20 lg:hidden" onClick={onClose} />
+            <motion.aside
+              initial={{ x: -300 }}
+              animate={{ x: 0 }}
+              exit={{ x: -300 }}
+              transition={{ type: "spring", stiffness: 380, damping: 36 }}
+              className="fixed inset-y-0 left-0 z-50 w-[280px] max-w-[85vw] bg-white shadow-[var(--shadow-lg)] lg:hidden"
+            >
+              {list}
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+    </>
   );
 }

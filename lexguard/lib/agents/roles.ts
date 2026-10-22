@@ -1,28 +1,16 @@
 // Les cinq rôles. L'analyste découpe, les chercheurs explorent le corpus en
 // plusieurs étapes, le juge tranche, le contradicteur attaque, le rédacteur synthétise.
-import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { tracedQuery } from "../db";
 import type { Disposition, Severity, Verdict } from "../types";
-import { anthropic, type CostMeter, FALLBACK, MODELS } from "./llm";
-import { type FullArticle, makeResearchTools } from "./tools";
+import { type CostMeter, MODELS, structured, toolLoop } from "./llm";
+import { type FullArticle, makeResearchTools, type NiveauFiltre, type ResearchState } from "./tools";
 
 const SOURCES_RULE =
   "Tu ne t'appuies que sur les textes fournis ou trouvés avec tes outils, jamais sur ta mémoire. Seule la version publiée sur Légifrance fait foi.";
 
-async function parse<T extends z.ZodType>(meter: CostMeter, model: string, effort: "low" | "medium" | "high", system: string, user: string, schema: T): Promise<z.infer<T>> {
-  const response = await anthropic().beta.messages.parse({
-    model,
-    max_tokens: 16000,
-    output_config: { effort, format: betaZodOutputFormat(schema) },
-    ...FALLBACK,
-    system,
-    messages: [{ role: "user", content: user }],
-  });
-  meter.add(model, response.usage);
-  if (response.stop_reason === "refusal" || !response.parsed_output) throw new Error(`Réponse inexploitable (${response.stop_reason})`);
-  return response.parsed_output as z.infer<T>;
-}
+const parse = <T extends z.ZodType>(meter: CostMeter, model: string, effort: "low" | "medium" | "high", system: string, user: string, schema: T) =>
+  structured(meter, model, effort, system, user, schema);
 
 // ---------- 1. Analyste ----------
 
@@ -52,36 +40,80 @@ export async function analyst(meter: CostMeter, acte: string): Promise<{ autorit
   return { autorite: out.autorite, dispositions: out.dispositions.slice(0, 6).map((d, i) => ({ ...d, id: `d${i + 1}` })) };
 }
 
+// ---------- 1 bis. Contrôle de forme ----------
+
+// Règles de forme d'un acte administratif local, lues dans le corpus (jamais de mémoire).
+const FORME_RULES: Array<[string, string]> = [
+  ["L212-1", "Code des relations entre le public et l'administration"], // signature, prénom, nom, qualité
+  ["L211-2", "Code des relations entre le public et l'administration"], // motivation (décisions individuelles défavorables)
+  ["L221-2", "Code des relations entre le public et l'administration"], // publicité des actes réglementaires
+  ["L2131-1", "Code général des collectivités territoriales"], // caractère exécutoire, transmission au préfet
+  ["L2122-18", "Code général des collectivités territoriales"], // délégation de signature aux adjoints
+  ["R421-5", "Code de justice administrative"], // mention des voies et délais de recours
+];
+
+const ELEMENTS = ["autorite", "date", "dispositif", "signature", "identite_signataire", "visas", "motivation", "voies_recours"] as const;
+
+const FormeSchema = z.object({
+  nature: z.enum(["arrete", "deliberation", "decret", "autre"]).describe("« autre » si le document n'est pas un acte administratif"),
+  description: z.string().describe("Ce qu'est réellement le document, en une phrase précise (ex. « arrêté municipal du maire de X », « tableau récapitulatif de résultats attendus »)"),
+  elements: z.array(z.object({ element: z.enum(ELEMENTS), present: z.boolean(), extrait: z.string().describe("Passage du document qui le montre ; vide si absent") })),
+  manquements: z.array(
+    z.object({
+      title: z.string().describe("Le défaut, en une phrase courte"),
+      explanation: z.string().describe("Pourquoi c'est un défaut de forme et ses conséquences (illégalité, inopposabilité, non exécutoire…)"),
+      severity: z.enum(["critique", "majeure", "mineure", "info"]),
+      article_id: z.string().describe("Identifiant de l'article fourni qui pose la règle"),
+      quote: z.string().describe("Passage repris MOT POUR MOT de cet article"),
+      suggestion: z.string().describe("Ce qu'il faut ajouter ou corriger"),
+    }),
+  ),
+});
+export type FormeOutput = z.infer<typeof FormeSchema> & { articles: FullArticle[] };
+
+/** Nature du document et respect des règles de forme (signature, mentions, publicité, recours…). */
+export async function formalist(meter: CostMeter, acte: string, findByNum: (num: string, code: string) => Promise<FullArticle[]>): Promise<FormeOutput> {
+  const articles = (await Promise.all(FORME_RULES.map(([num, code]) => findByNum(num, code).then((r) => r[0])))).filter((a): a is FullArticle => !!a);
+  const out = await parse(
+    meter,
+    MODELS.fast,
+    "medium",
+    `Tu es juriste en contrôle de légalité. Tu examines la FORME d'un document déposé par un agent de préfecture ou de collectivité.
+1. Dis précisément ce qu'est le document. Un acte administratif (arrêté, délibération, décret) émane d'une autorité identifiée, est daté, et contient un dispositif normatif (« ARRÊTE », « DÉCIDE », « DÉCRÈTE », « DÉLIBÈRE » suivi d'articles). S'il manque cela, la nature est « autre » : décris ce que c'est vraiment.
+2. Pour chaque élément (autorité, date, dispositif, signature, identité du signataire, visas, motivation, voies de recours), dis s'il est présent, avec l'extrait qui le prouve.
+3. Liste les manquements aux règles de forme, uniquement ceux que démontrent les articles fournis, en citant MOT POUR MOT l'article. Pour un document « autre », liste ce qui lui manque pour être un acte valable. N'invente aucune règle ; n'examine pas le fond (compétence matérielle, proportionnalité) : d'autres agents s'en chargent. ${SOURCES_RULE}`,
+    `Document déposé :\n${acte.slice(0, 30_000)}\n\nRègles de forme (corpus) :\n${articles.map((a) => `<article id="${a.id}" source="${a.code_title}" num="${a.num}">\n${a.text.slice(0, 4000)}\n</article>`).join("\n")}`,
+    FormeSchema,
+  );
+  return { ...out, articles };
+}
+
 // ---------- 2. Chercheur (agent multi-étapes avec outils) ----------
 
-export async function researcher(meter: CostMeter, d: Disposition, acte: { autorite: string; collectivite: string | null }, onTool: (msg: string) => void) {
+export interface ResearchOptions {
+  mode?: "controle" | "exploration";
+  cadrage?: string; // texte de cadrage (domaine, période, périmètre…)
+}
+
+const RESEARCH_METHOD = {
+  controle: `Tu es chercheur juridique pour une préfecture qui exerce le contrôle de légalité. Pour UNE disposition d'un acte local, tu constitues le dossier de normes supérieures que le juge devra lire.
+Méthode : (1) identifie la base de compétence de l'autorité (ex. pouvoirs de police du maire, CGCT L2212-1 et suivants) ; (2) cherche s'il existe une police spéciale ou une compétence d'une autre autorité (État, préfet, ministre) sur cet objet ; (3) cherche les règles de fond (seuils, interdictions, procédures) ; (4) vérifie les doublons avec les actes locaux existants ; (5) si l'acte vise un texte UE, lis-le.`,
+  exploration: `Tu es chercheur juridique pour une collectivité qui envisage une nouvelle mesure. Pour UN angle de recherche, tu cartographies ce qui existe déjà : règles en vigueur, autorité compétente, textes récents du Journal officiel, actes déjà pris par des collectivités, droit de l'UE si le périmètre l'inclut.`,
+};
+
+export async function researcher(meter: CostMeter, d: Disposition, acte: { autorite: string; collectivite: string | null }, onTool: (msg: string) => void, opts: ResearchOptions = {}) {
   const state = { candidates: new Map<string, string>(), consulted: new Set<string>() };
   const tools = makeResearchTools(`chercheur ${d.id}`, state);
-  const runner = anthropic().beta.messages.toolRunner({
-    model: MODELS.fast,
-    max_tokens: 16000,
-    max_iterations: 14,
-    output_config: { effort: "medium" },
-    ...FALLBACK,
-    system: `Tu es chercheur juridique pour une préfecture qui exerce le contrôle de légalité. Pour UNE disposition d'un acte local, tu constitues le dossier de normes supérieures que le juge devra lire.
-Méthode : (1) identifie la base de compétence de l'autorité (ex. pouvoirs de police du maire, CGCT L2212-1 et suivants) ; (2) cherche s'il existe une police spéciale ou une compétence d'une autre autorité (État, préfet, ministre) sur cet objet ; (3) cherche les règles de fond (seuils, interdictions, procédures) ; (4) vérifie les doublons avec les actes locaux existants ; (5) si l'acte vise un texte UE, lis-le. Fais plusieurs recherches avec des formulations juridiques différentes, lis les articles prometteurs en entier et suis leurs liens.
+  await toolLoop(meter, MODELS.fast, {
+    maxIterations: 14,
+    effort: "medium",
+    system: `${RESEARCH_METHOD[opts.mode ?? "controle"]} Fais plusieurs recherches avec des formulations juridiques différentes, lis les articles prometteurs en entier et suis leurs liens.
 ${SOURCES_RULE} Termine par submit_dossier.`,
+    user: `Autorité : ${acte.autorite}${acte.collectivite ? ` (${acte.collectivite})` : ""}\nDisposition ${d.id} : ${d.text}\nObjet : ${d.objet}\nMesure : ${d.mesure}\nPérimètre : ${d.perimetre ?? "—"}\nTextes visés par l'acte : ${d.references.join(" ; ") || "aucun"}${opts.cadrage ?? ""}`,
     tools,
-    messages: [
-      {
-        role: "user",
-        content: `Autorité : ${acte.autorite}${acte.collectivite ? ` (${acte.collectivite})` : ""}\nDisposition ${d.id} : ${d.text}\nObjet : ${d.objet}\nMesure : ${d.mesure}\nPérimètre : ${d.perimetre ?? "—"}\nTextes visés par l'acte : ${d.references.join(" ; ") || "aucun"}`,
-      },
-    ],
+    onToolUse: (name, input) => onTool(`${name} ${JSON.stringify(input)}`),
+    isDone: () => state.candidates.size > 0,
   });
-  for await (const message of runner) {
-    meter.add(MODELS.fast, message.usage);
-    for (const block of message.content) {
-      if (block.type === "tool_use" && block.name !== "submit_dossier") onTool(`${block.name} ${JSON.stringify(block.input)}`);
-    }
-    if (message.stop_reason === "pause_turn") runner.pushMessages({ role: "assistant", content: message.content });
-    if (state.candidates.size) break;
-  }
   const notes = state.candidates.get("__notes__") ?? "";
   state.candidates.delete("__notes__");
   return { candidates: state.candidates, notes, consulted: state.consulted };
@@ -101,7 +133,7 @@ export type JudgeOutput = z.infer<typeof VerdictSchema>;
 
 export function articleBlock(articles: FullArticle[], why: Map<string, string>) {
   return articles
-    .map((a) => `<article id="${a.id}" code="${a.code_title}" num="${a.num}" etat="${a.etat}" vigueur="${a.date_debut ?? "?"} → ${a.date_fin ?? "…"}">\nPertinence (chercheur) : ${why.get(a.id) ?? "—"}\n${a.text.slice(0, 5000)}\n</article>`)
+    .map((a) => `<article id="${a.id}" niveau="${a.niveau}" source="${a.code_title}" num="${a.num}" etat="${a.etat}" vigueur="${a.date_debut ?? "?"} → ${a.date_fin ?? "…"}">\nPertinence (chercheur) : ${why.get(a.id) ?? "—"}\n${a.text.slice(0, a.niveau === "jurisprudence" ? 7000 : 5000)}\n</article>`)
     .join("\n\n");
 }
 
@@ -120,7 +152,7 @@ export async function doctrine(d: Disposition): Promise<string> {
     .join("\n")}`;
 }
 
-export async function judge(meter: CostMeter, d: Disposition, articles: FullArticle[], why: Map<string, string>, notes: string, dateActe: string | null): Promise<JudgeOutput> {
+export async function judge(meter: CostMeter, d: Disposition, articles: FullArticle[], why: Map<string, string>, notes: string, dateActe: string | null, cadrage = ""): Promise<JudgeOutput> {
   return parse(
     meter,
     MODELS.deep,
@@ -131,8 +163,9 @@ export async function judge(meter: CostMeter, d: Disposition, articles: FullArti
 - doublon : répète inutilement une règle déjà posée (loi, code ou acte local existant) ;
 - vide : la disposition s'appuie sur un texte absent, abrogé ou non encore pris (décret d'application manquant) ;
 - conforme : aucun problème démontrable avec les textes fournis.
+Raisonne selon la pyramide des normes : bloc de constitutionnalité (Constitution, DDHC, Préambule de 1946, Charte de l'environnement) > engagements internationaux et droit de l'UE (CEDH, Charte des droits fondamentaux de l'UE, directives) > lois et codes > règlements > actes locaux. La jurisprudence du Conseil d'État (niveau « jurisprudence ») éclaire l'interprétation : cite-la quand une décision a jugé une mesure semblable.
 Exige la preuve : chaque citation reprend MOT POUR MOT un passage d'un article fourni (balise <article>), sinon ne la mets pas. Si les textes fournis ne suffisent pas à démontrer un problème, réponds « conforme » avec gravité « info ». La date de référence est ${dateActe ?? "aujourd'hui"}. ${SOURCES_RULE}`,
-    `Disposition : ${d.text}\nObjet : ${d.objet}\nMesure : ${d.mesure}\nAutorité : ${d.autorite}\nPérimètre : ${d.perimetre ?? "—"}\n\nNotes du chercheur : ${notes || "—"}\n\nTextes du dossier :\n${articleBlock(articles, why)}${await doctrine(d)}`,
+    `Disposition : ${d.text}\nObjet : ${d.objet}\nMesure : ${d.mesure}\nAutorité : ${d.autorite}\nPérimètre : ${d.perimetre ?? "—"}\n\nNotes du chercheur : ${notes || "—"}${cadrage}\n\nTextes du dossier :\n${articleBlock(articles, why)}${await doctrine(d)}`,
     VerdictSchema,
   );
 }
@@ -150,7 +183,7 @@ export async function critic(meter: CostMeter, d: Disposition, finding: JudgeOut
     meter,
     MODELS.deep,
     "medium",
-    `Tu es l'avocat de la collectivité. Ton rôle est d'attaquer l'alerte du juge : cherche l'erreur de qualification, la norme mal lue, l'exception oubliée, la confusion entre police générale et police spéciale, la date de vigueur. Garde l'alerte seulement si elle est solidement fondée sur les textes fournis. Une préfecture préfère zéro alerte à une fausse alerte. ${SOURCES_RULE}`,
+    `Tu es l'avocat de la collectivité. Ton rôle est d'attaquer l'alerte du juge : cherche l'erreur de qualification, la norme mal lue, l'exception oubliée, la confusion entre police générale et police spéciale, la date de vigueur. Écarte l'alerte (keep=false) seulement si tu identifies une erreur précise et démontrable dans les textes fournis : citation qui ne dit pas ce que le juge affirme, exception expresse qui s'applique, article hors vigueur, mauvaise autorité. Le doute, la prudence ou le fait que l'alerte soit « catégorique » ne suffisent pas : si les textes établissent la règle, garde l'alerte et ajuste seulement la gravité. Une fausse alerte coûte cher, une vraie illégalité manquée aussi. ${SOURCES_RULE}`,
     `Disposition : ${d.text}\n\nAlerte du juge (${finding.verdict}, ${finding.severity}) : ${finding.title}\n${finding.explanation}\nCitations : ${finding.citations.map((c) => `${c.article_id} « ${c.quote} »`).join(" ; ")}\n\nContrôles automatiques : ${codeProblems.length ? codeProblems.join(" ; ") : "citations vérifiées (extraits présents, articles en vigueur)"}\n\nTextes :\n${articleBlock(articles, new Map())}`,
     CritiqueSchema,
   );
@@ -158,10 +191,55 @@ export async function critic(meter: CostMeter, d: Disposition, finding: JudgeOut
 
 // ---------- 5. Rédacteur ----------
 
-const SummarySchema = z.object({ headline: z.string().describe("Synthèse en une ou deux phrases pour le maire ou le préfet") });
+const SummarySchema = z.object({ headline: z.string().describe("Une ou deux phrases complètes qui disent au maire ou au préfet ce qui pose problème et pourquoi, ex. « L'arrêté est illégal : le maire n'est pas compétent pour… ». Jamais un simple titre.") });
 
 export async function writer(meter: CostMeter, title: string, findings: Array<{ verdict: Verdict; severity: Severity; title: string; verified: boolean }>) {
   const kept = findings.filter((f) => f.verified && f.verdict !== "conforme");
   if (!kept.length) return { headline: `Aucune irrégularité démontrée dans « ${title} » au regard des textes consultés.` };
-  return parse(meter, MODELS.fast, "low", "Tu rédiges la synthèse d'un contrôle de légalité, en français clair, sans jargon inutile.", `Acte : ${title}\nAlertes retenues :\n${kept.map((f) => `- [${f.severity}] ${f.verdict} : ${f.title}`).join("\n")}`, SummarySchema);
+  return parse(meter, MODELS.router, "low", "Tu rédiges la synthèse d'un contrôle de légalité, en français clair, sans jargon inutile : une conclusion concrète qui nomme le problème principal, pas un titre.", `Acte : ${title}\nAlertes retenues :\n${kept.map((f) => `- [${f.severity}] ${f.verdict} : ${f.title}`).join("\n")}`, SummarySchema);
+}
+
+// ---------- 2 bis. Sous-agents par niveau de la pyramide des normes ----------
+
+export const LEVELS: Array<{ id: string; label: string; niveaux: NiveauFiltre[]; method: string }> = [
+  {
+    id: "constitution",
+    label: "Bloc de constitutionnalité",
+    niveaux: ["constitutionnel"],
+    method:
+      "Tu cherches, pour chaque disposition, les principes constitutionnels en jeu : libertés (aller et venir, entreprendre, expression, culte, propriété — DDHC), libre administration des collectivités (Constitution art. 72), principe de précaution et droit à un environnement sain (Charte de l'environnement), égalité. Utilise search_corpus avec niveau=constitutionnel.",
+  },
+  {
+    id: "international",
+    label: "Droit international et de l'UE",
+    niveaux: ["international"],
+    method:
+      "Tu cherches, pour chaque disposition, les normes internationales et européennes en jeu : CEDH (vie privée art. 8, religion art. 9, expression art. 10, réunion art. 11), Charte des droits fondamentaux de l'UE, directive Services (régimes d'autorisation des activités). Utilise search_corpus avec niveau=international et, si un acte UE précis est visé, fetch_eu_act.",
+  },
+  {
+    id: "jurisprudence",
+    label: "Jurisprudence administrative",
+    niveaux: ["jurisprudence"],
+    method:
+      "Tu cherches dans les décisions du Conseil d'État (search_jurisprudence) des affaires où une mesure semblable a été jugée : annulation ou validation d'arrêtés municipaux, contrôle de proportionnalité des mesures de police, compétence. Lis les décisions prometteuses (get_article avec l'ECLI) et ne retiens que celles qui tranchent un point utile.",
+  },
+];
+
+export async function levelResearcher(meter: CostMeter, level: (typeof LEVELS)[number], dispositions: Disposition[], acte: { autorite: string; collectivite: string | null }, onTool: (msg: string) => void, cadrage = "") {
+  const state: ResearchState = { candidates: new Map(), consulted: new Set(), assign: new Map() };
+  const tools = makeResearchTools(`agent ${level.id}`, state, level.niveaux);
+  await toolLoop(meter, MODELS.fast, {
+    maxIterations: 12,
+    effort: "medium",
+    system: `Tu es l'expert « ${level.label} » d'une équipe de contrôle de légalité. D'autres agents couvrent les codes ; toi tu couvres uniquement ton niveau de la pyramide des normes. ${level.method}
+${SOURCES_RULE} Si rien de ton niveau n'est pertinent, rends un dossier avec le texte le plus proche et dis-le dans notes. Termine par submit_dossier en indiquant pour chaque texte les dispositions concernées (d1, d2…).`,
+    user: `Autorité : ${acte.autorite}${acte.collectivite ? ` (${acte.collectivite})` : ""}${cadrage}\n\nDispositions :\n${dispositions.map((d) => `${d.id} — ${d.text} (objet : ${d.objet} ; mesure : ${d.mesure})`).join("\n")}`,
+    tools,
+    onToolUse: (name, input) => onTool(`${name} ${JSON.stringify(input)}`),
+    isDone: () => state.candidates.size > 0,
+  });
+  const notes = state.candidates.get("__notes__") ?? "";
+  state.candidates.delete("__notes__");
+  state.assign?.delete("__notes__");
+  return { level, candidates: state.candidates, assign: state.assign!, notes, consulted: state.consulted };
 }

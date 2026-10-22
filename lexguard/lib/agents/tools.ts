@@ -8,6 +8,7 @@ import { recentEuActs } from "../sources/eurlex";
 
 export interface ArticleHit {
   id: string;
+  niveau?: string;
   code_title: string;
   num: string | null;
   etat: string;
@@ -15,23 +16,28 @@ export interface ArticleHit {
   snippet: string;
 }
 
-export async function searchCorpus(actor: string, query: string, code?: string, limit = 8): Promise<ArticleHit[]> {
+export type NiveauFiltre = "constitutionnel" | "international" | "code" | "jurisprudence";
+
+export async function searchCorpus(actor: string, query: string, code?: string, limit = 8, since?: string, niveaux: NiveauFiltre[] = ["constitutionnel", "international", "code"]): Promise<ArticleHit[]> {
   return tracedQuery<ArticleHit>(
     actor,
     "recherche plein texte",
-    `articles « ${query} »${code ? ` dans ${code}` : ""}`,
-    `select id, code_title, num, etat, section,
+    `${niveaux.join("+")} « ${query} »${code ? ` dans ${code}` : ""}${since ? ` depuis ${since}` : ""}`,
+    `select id, niveau, code_title, num, etat, section,
             ts_headline('french', text, q, 'MaxWords=45, MinWords=20, StartSel=«, StopSel=»') as snippet
        from articles, websearch_to_tsquery('french', $1) q
       where tsv @@ q and etat = 'VIGUEUR' and ($2::text is null or code_title ilike '%' || $2 || '%')
+        and ($4::date is null or date_debut >= $4::date) and niveau = any($5)
       order by ts_rank_cd(tsv, q) desc
       limit $3`,
-    [query, code ?? null, limit],
+    [query, code ?? null, limit, since ?? null, niveaux],
   );
 }
 
 export interface FullArticle {
   id: string;
+  niveau: string;
+  url: string | null;
   cid: string | null;
   code_title: string;
   num: string | null;
@@ -48,7 +54,7 @@ export async function getArticles(actor: string, ids: string[]): Promise<FullArt
     actor,
     "lecture article",
     ids.join(", "),
-    `select id, cid, code_title, num, section, text, etat, date_debut::text, date_fin::text from articles where id = any($1)`,
+    `select id, niveau, url, cid, code_title, num, section, text, etat, date_debut::text, date_fin::text from articles where id = any($1)`,
     [ids],
   );
 }
@@ -60,7 +66,7 @@ export async function findByNum(actor: string, num: string, code?: string): Prom
     actor,
     "lecture article",
     `numéro ${clean}${code ? ` (${code})` : ""}`,
-    `select id, cid, code_title, num, section, text, etat, date_debut::text, date_fin::text
+    `select id, niveau, url, cid, code_title, num, section, text, etat, date_debut::text, date_fin::text
        from articles
       where replace(replace(num, ' ', ''), '.', '') = replace($1, '.', '') and etat = 'VIGUEUR'
         and ($2::text is null or code_title ilike '%' || $2 || '%')
@@ -69,17 +75,36 @@ export async function findByNum(actor: string, num: string, code?: string): Prom
   );
 }
 
-export function makeResearchTools(actor: string, state: { candidates: Map<string, string>; consulted: Set<string> }) {
+export interface ResearchState {
+  candidates: Map<string, string>; // article → pourquoi
+  consulted: Set<string>;
+  assign?: Map<string, string[]>; // article → dispositions concernées (agents de niveau)
+}
+
+export const sourceUrl = (a: { id: string; url?: string | null }) => a.url ?? legifranceArticleUrl(a.id);
+
+export function makeResearchTools(actor: string, state: ResearchState, niveauxParDefaut: NiveauFiltre[] = ["constitutionnel", "international", "code"]) {
   const fmtHits = (hits: ArticleHit[]) =>
-    hits.length ? hits.map((h) => `${h.id} | ${h.code_title} art. ${h.num ?? "?"} | ${h.section ?? ""}\n   ${h.snippet.replace(/\s+/g, " ")}`).join("\n") : "Aucun article en vigueur ne correspond. Reformule (synonymes juridiques, termes plus généraux).";
+    hits.length ? hits.map((h) => `${h.id} | [${h.niveau ?? "code"}] ${h.code_title} ${h.num ?? "?"} | ${h.section ?? ""}\n   ${h.snippet.replace(/\s+/g, " ")}`).join("\n") : "Aucun article en vigueur ne correspond. Reformule (synonymes juridiques, termes plus généraux).";
 
   return [
     betaZodTool({
       name: "search_corpus",
-      description: "Recherche plein texte (français, opérateurs websearch : guillemets, OR, -) dans les articles EN VIGUEUR des codes : CGCT, Code rural, Code de la route, Code de la santé publique, Code de l'environnement, Code de l'urbanisme, Code de la sécurité intérieure, Code pénal, CRPA. Filtre optionnel `code` (sous-chaîne du nom du code).",
-      inputSchema: z.object({ query: z.string(), code: z.string().optional() }),
-      run: async ({ query, code }) => {
-        const hits = await searchCorpus(actor, query, code);
+      description: "Recherche plein texte (français, opérateurs websearch : guillemets, OR, -) dans les textes EN VIGUEUR de la pyramide des normes : bloc de constitutionnalité (Constitution, DDHC, Préambule de 1946, Charte de l'environnement), international/UE (CEDH, Charte des droits fondamentaux de l'UE, directive Services) et 15 codes (CGCT, CRPA, justice administrative, route, voirie routière, CGPPP, sécurité intérieure, santé publique, environnement, construction et habitation, rural, électoral, urbanisme, forestier, pénal). Filtres optionnels : `code` (sous-chaîne du nom du code) et `since` (AAAA-MM-JJ : seulement les versions entrées en vigueur depuis cette date, pour voir ce qui a changé).",
+      inputSchema: z.object({
+        query: z.string(),
+        code: z.string().optional(),
+        since: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        niveau: z.enum(["constitutionnel", "international", "code"]).optional().describe("Restreindre à un niveau de la pyramide des normes"),
+      }),
+      run: async ({ query, code, since, niveau }) => {
+        // Un numéro d'article (« L253-7 », « R. 2212-1 ») n'est pas un mot : on le cherche aussi par numéro.
+        const nums = [...query.matchAll(/\b([LRDA])\.?\s?(\d{1,4}(?:-\d+)+)\b/g)].map((m) => `${m[1]}${m[2]}`);
+        const exact = (await Promise.all(nums.slice(0, 3).map((n) => findByNum(actor, n, code)))).flat();
+        const hits = [
+          ...exact.map((a) => ({ ...a, snippet: a.text.slice(0, 400) })),
+          ...(await searchCorpus(actor, query, code, 8, since, niveau ? [niveau] : niveauxParDefaut)).filter((h) => !exact.some((a) => a.id === h.id)),
+        ];
         hits.forEach((h) => state.consulted.add(h.id));
         return fmtHits(hits);
       },
@@ -94,7 +119,7 @@ export function makeResearchTools(actor: string, state: { candidates: Map<string
         return rows
           .map((a) => {
             state.consulted.add(a.id);
-            return `${a.id} | ${a.code_title} art. ${a.num} | ${a.etat} du ${a.date_debut ?? "?"} au ${a.date_fin ?? "…"}\nSection : ${a.section ?? "—"}\n${a.text.slice(0, 6000)}`;
+            return `${a.id} | [${a.niveau}] ${a.code_title} ${a.num} | ${a.etat} du ${a.date_debut ?? "?"} au ${a.date_fin ?? "…"}\nSection : ${a.section ?? "—"}\n${a.text.slice(0, a.niveau === "jurisprudence" ? 9000 : 6000)}`;
           })
           .join("\n\n---\n\n");
       },
@@ -117,6 +142,16 @@ export function makeResearchTools(actor: string, state: { candidates: Map<string
           [id],
         );
         return rows.length ? rows.map((r) => `${r.other} | ${r.type} (${r.sens ?? ""}) | ${r.code_title ? `${r.code_title} art. ${r.num}` : r.title ?? ""}`).join("\n") : "Aucun lien déclaré.";
+      },
+    }),
+    betaZodTool({
+      name: "search_jurisprudence",
+      description: "Recherche plein texte dans les décisions du Conseil d'État (open data, depuis septembre 2021) : annulations d'arrêtés municipaux, interprétation des pouvoirs de police, etc. Renvoie l'identifiant ECLI à lire avec get_article.",
+      inputSchema: z.object({ query: z.string(), since: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }),
+      run: async ({ query, since }) => {
+        const hits = await searchCorpus(actor, query, undefined, 6, since, ["jurisprudence"]);
+        hits.forEach((h) => state.consulted.add(h.id));
+        return fmtHits(hits);
       },
     }),
     betaZodTool({
@@ -156,9 +191,10 @@ export function makeResearchTools(actor: string, state: { candidates: Map<string
       description: "Lit un acte de l'Union européenne sur EUR-Lex par son numéro CELEX (ex. 32009L0128 pour la directive pesticides). Renvoie le début du texte.",
       inputSchema: z.object({ celex: z.string().regex(/^[0-9A-Z]{6,}$/) }),
       run: async ({ celex }) => {
-        const url = `https://eur-lex.europa.eu/legal-content/FR/TXT/HTML/?uri=CELEX:${celex}`;
+        // EUR-Lex bloque les lectures automatiques : on passe par CELLAR (Office des publications).
+        const url = `http://publications.europa.eu/resource/celex/${celex}`;
         const t0 = Date.now();
-        const html = await (await fetch(url, { signal: AbortSignal.timeout(20_000) })).text();
+        const html = await (await fetch(url, { headers: { accept: "text/html", "accept-language": "fr" }, signal: AbortSignal.timeout(30_000) })).text();
         const text = htmlToText(html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ""));
         await tracedQuery(actor, "EUR-Lex", `CELEX ${celex} (${Date.now() - t0} ms)`, "select 1");
         return `${url}\n${text.slice(0, 8000)}`;
@@ -221,7 +257,10 @@ export function makeResearchTools(actor: string, state: { candidates: Map<string
       name: "submit_dossier",
       description: "Rend ton dossier : les articles (identifiants LEGIARTI) que le juge doit lire, chacun avec la raison de sa pertinence. Inclure la règle de compétence applicable, les règles de fond, et tout article qui pourrait rendre la disposition CONFORME. À appeler une fois, en dernier.",
       inputSchema: z.object({
-        candidates: z.array(z.object({ article_id: z.string(), why: z.string() })).min(1).max(10),
+        candidates: z
+          .array(z.object({ article_id: z.string(), why: z.string(), dispositions: z.array(z.string()).optional().describe("Dispositions concernées (d1, d2…) ; vide = toutes") }))
+          .min(1)
+          .max(12),
         notes: z.string().describe("Ce que tu as cherché sans trouver, actes locaux ou textes UE pertinents"),
       }),
       run: async ({ candidates, notes }) => {
@@ -229,7 +268,10 @@ export function makeResearchTools(actor: string, state: { candidates: Map<string
         const known = new Set(found.map((a) => a.id));
         const unknown = candidates.filter((c) => !known.has(c.article_id)).map((c) => c.article_id);
         if (unknown.length) throw new Error(`Identifiants inconnus : ${unknown.join(", ")}. Utilise uniquement des LEGIARTI renvoyés par les outils.`);
-        candidates.forEach((c) => state.candidates.set(c.article_id, c.why));
+        candidates.forEach((c) => {
+          state.candidates.set(c.article_id, c.why);
+          state.assign?.set(c.article_id, c.dispositions ?? []);
+        });
         state.candidates.set("__notes__", notes);
         return "Dossier reçu. Termine sans autre texte.";
       },

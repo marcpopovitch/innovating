@@ -1,3 +1,5 @@
+import type { MessageKey } from "@/lib/i18n/messages";
+import type { T } from "@/lib/i18n/translate";
 import type { AgentName, Severity, Verdict } from "@/lib/types";
 
 export const AGENT_STYLE: Record<AgentName, { label: string; dot: string }> = {
@@ -14,9 +16,11 @@ export const AGENT_STYLE: Record<AgentName, { label: string; dot: string }> = {
 export const VERDICT_STYLE: Record<Verdict, { label: string; className: string }> = {
   conflit: { label: "Conflit", className: "bg-red/10 text-red-deep" },
   incompetence: { label: "Incompétence", className: "bg-red/10 text-red-deep" },
+  forme: { label: "Vice de forme", className: "bg-red/10 text-red-deep" },
   doublon: { label: "Doublon", className: "bg-orange/10 text-orange" },
   vide: { label: "Vide juridique", className: "bg-orange/10 text-orange" },
   conforme: { label: "Conforme", className: "bg-ok/10 text-ok" },
+  existant: { label: "Texte existant", className: "bg-[#09f]/10 text-[#0077cc]" },
 };
 
 export const SEVERITY_LABEL: Record<Severity, string> = {
@@ -25,3 +29,8 @@ export const SEVERITY_LABEL: Record<Severity, string> = {
   mineure: "Mineure",
   info: "Info",
 };
+
+// Versions traduites : les tables ci-dessus gardent leurs libellés français pour les importeurs existants.
+export const agentLabel = (t: T, agent: AgentName) => t(`docs.agent.${agent}` as MessageKey);
+export const verdictLabel = (t: T, verdict: Verdict) => t(`docs.verdict.${verdict}` as MessageKey);
+export const severityLabel = (t: T, severity: Severity) => t(`docs.severity.${severity}` as MessageKey);
