@@ -3,6 +3,21 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+# Niveaux de norme, du plus fort au plus faible. La jurisprudence n'est pas une norme
+# supérieure : elle sert à interpréter les textes.
+LEVELS = ("constitution", "international", "loi", "décret", "arrêté", "jurisprudence")
+Level = Literal["constitution", "international", "loi", "décret", "arrêté", "jurisprudence"]
+
+
+class Article(BaseModel):
+    """Format d'un article renvoyé par search_articles."""
+    id: str
+    ref: str  # doit rester unique : le garde-fou anti-hallucination s'en sert comme clé
+    level: Level | None = None  # si absent, déduit de la ref (voir search.infer_level)
+    version_date: str
+    url: str
+    text: str
+
 
 class Obligation(BaseModel):
     id: str

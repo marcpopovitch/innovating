@@ -3,14 +3,15 @@ import json
 
 from agents.config import MODEL_FAST
 from agents.llm import call, json_instructions, parse_json, text_of
-from agents.schemas import Obligation, ResearcherOut
+from agents.schemas import LEVELS, Obligation, ResearcherOut
 from agents.search import search_articles
 
 MAX_TOOL_CALLS = 4
 
 TOOL = {
     "name": "search_articles",
-    "description": "Recherche par mots-clés dans les textes juridiques en vigueur (UE, lois, décrets, arrêtés). "
+    "description": "Recherche par mots-clés dans les textes juridiques en vigueur (constitution, droit "
+                   "international et de l'UE, lois, décrets, arrêtés) et la jurisprudence. "
                    "Renvoie une liste d'articles : id, ref, level, version_date, text.",
     "input_schema": {
         "type": "object",
@@ -18,7 +19,7 @@ TOOL = {
             "query": {"type": "string", "description": "Mots-clés juridiques."},
             "filters": {
                 "type": "object",
-                "properties": {"level": {"type": "string", "enum": ["UE", "loi", "décret", "arrêté"]}},
+                "properties": {"level": {"type": "string", "enum": list(LEVELS)}},
                 "description": "Optionnel : filtrer par niveau de norme.",
             },
         },
