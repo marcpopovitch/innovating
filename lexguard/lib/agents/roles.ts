@@ -148,7 +148,7 @@ const SummarySchema = z.object({ headline: z.string().describe("Synthèse en une
 export async function writer(meter: CostMeter, title: string, findings: Array<{ verdict: Verdict; severity: Severity; title: string; verified: boolean }>) {
   const kept = findings.filter((f) => f.verified && f.verdict !== "conforme");
   if (!kept.length) return { headline: `Aucune irrégularité démontrée dans « ${title} » au regard des textes consultés.` };
-  return parse(meter, MODELS.fast, "low", "Tu rédiges la synthèse d'un contrôle de légalité, en français clair, sans jargon inutile.", `Acte : ${title}\nAlertes retenues :\n${kept.map((f) => `- [${f.severity}] ${f.verdict} : ${f.title}`).join("\n")}`, SummarySchema);
+  return parse(meter, MODELS.router, "low", "Tu rédiges la synthèse d'un contrôle de légalité, en français clair, sans jargon inutile.", `Acte : ${title}\nAlertes retenues :\n${kept.map((f) => `- [${f.severity}] ${f.verdict} : ${f.title}`).join("\n")}`, SummarySchema);
 }
 
 // ---------- 2 bis. Sous-agents par niveau de la pyramide des normes ----------

@@ -34,7 +34,7 @@ export async function createAnalysis(input: AnalysisInput): Promise<string> {
     input.collectivite ?? null,
     input.date_acte || null,
     input.mode ?? "controle",
-    input.model ?? "jev",
+    input.model ?? "gpt-6-luna",
     input.cadrage ? JSON.stringify(input.cadrage) : null,
   ]);
   return id;
@@ -114,7 +114,7 @@ async function analyseDisposition(
 export async function runAnalysis(analysisId: string): Promise<void> {
   const client = await db();
   const { rows } = await client.query<{ model: string }>("select model from analyses where id = $1", [analysisId]);
-  const model = rows[0]?.model && MODEL_CHOICES.some((c) => c.id === rows[0].model) ? rows[0].model : "jev";
+  const model = rows[0]?.model && MODEL_CHOICES.some((c) => c.id === rows[0].model) ? rows[0].model : "gpt-6-luna";
   return withModel(model, () => run(analysisId));
 }
 

@@ -34,7 +34,7 @@ export async function runExploration(analysisId: string, meter: CostMeter, idea:
   await emit(analysisId, "analyste", "etape", "Découpage de l'idée en angles de recherche");
   const plan = await structured(
     meter,
-    MODELS.fast,
+    MODELS.router,
     "low",
     "Tu prépares une recherche juridique pour une collectivité qui a une idée de mesure. Découpe-la en 3 ou 4 angles de recherche complémentaires et précis.",
     `${idea}${cadrage}`,

@@ -10,17 +10,21 @@ import type { BetaRunnableTool } from "@anthropic-ai/sdk/lib/tools/BetaRunnableT
 import { z } from "zod";
 import { MODEL_CHOICES } from "../types";
 
-// Sous-agents (chercheurs, experts, analyste) : le modèle le moins cher qui tient
-// l'usage d'outils. Le modèle choisi dans l'interface fait le jugement.
+// Trois rôles :
+// - fast : sous-agents à outils (chercheurs, experts, analyste), le modèle le moins cher qui tient l'usage d'outils ;
+// - deep : le jugement, avec le modèle choisi dans l'interface ;
+// - router : Jev (TypeSafe), branché d'office sur les étapes de langage sans outils qui dépendent de la
+//   demande (questions de cadrage, angles de recherche, veille, synthèse) ; il choisit le modèle à chaque requête.
 const DEFAULT_MODELS = {
   fast: process.env.LEXGUARD_FAST_MODEL ?? "gpt-6-luna",
-  deep: process.env.LEXGUARD_DEEP_MODEL ?? "jev",
+  deep: process.env.LEXGUARD_DEEP_MODEL ?? "gpt-6-luna",
+  router: process.env.LEXGUARD_ROUTER_MODEL ?? "jev",
 };
 
 // Le modèle choisi vaut pour toute une analyse, y compris ses sous-agents parallèles.
 const modelContext = new AsyncLocalStorage<typeof DEFAULT_MODELS>();
 export function withModel<T>(deep: string, fn: () => Promise<T>): Promise<T> {
-  return modelContext.run({ fast: DEFAULT_MODELS.fast, deep }, fn);
+  return modelContext.run({ ...DEFAULT_MODELS, deep }, fn);
 }
 export const MODELS = {
   get fast() {
@@ -28,6 +32,9 @@ export const MODELS = {
   },
   get deep() {
     return modelContext.getStore()?.deep ?? DEFAULT_MODELS.deep;
+  },
+  get router() {
+    return modelContext.getStore()?.router ?? DEFAULT_MODELS.router;
   },
 };
 
@@ -45,16 +52,16 @@ const BACKEND_PRICES: Record<string, [number, number]> = { "gpt-6-luna": [0.1, 0
 
 type Route = { kind: "openai" | "openrouter" | "anthropic"; model: string; priceId: string };
 /**
- * Choix produit : Jev passe par OpenRouter ; tout autre choix est exécuté par OpenAI avec le
- * modèle de même gamme (MODEL_CHOICES.backend). Sans clé OpenAI, repli sur OpenRouter puis
- * sur Anthropic pour garder l'application utilisable.
+ * Choix produit : Jev (étapes de langage) passe par OpenRouter ; tout le reste est exécuté par OpenAI
+ * avec le modèle de même gamme (MODEL_CHOICES.backend). Sans clé OpenRouter, Jev est remplacé par
+ * GPT-6 Luna ; sans clé OpenAI, repli sur OpenRouter puis sur Anthropic.
  */
 function route(id: string): Route {
   const e = env();
   const c = choice(id);
   if (id === "jev" && e.openrouter) return { kind: "openrouter", model: "typesafe/jev-router", priceId: "jev" };
   if (e.openai) {
-    const backend = c && c.backend !== "jev" ? c.backend : "gpt-6-luna";
+    const backend = c?.backend ?? "gpt-6-luna";
     return { kind: "openai", model: backend, priceId: backend };
   }
   if (e.openrouter) return { kind: "openrouter", model: c?.openrouter ?? id, priceId: id };

@@ -79,7 +79,7 @@ export async function runVeille(days = 2, log: (m: string) => void = console.log
     if (useLlm) {
       const res = await structured(
         meter,
-        MODELS.fast,
+        MODELS.router,
         "low",
         "Tu fais la veille juridique d'une préfecture. Un texte vient de paraître au Journal officiel. Pour chaque acte local candidat, dis s'il doit être revu (il applique, cite ou contredit une règle que ce texte crée, modifie ou abroge). Sois strict : un simple sujet voisin ne suffit pas.",
         `Texte du JO : ${jo.title}\nArticles visés : ${jo.modifies.map((m) => m.title).slice(0, 15).join(" ; ")}\n${jo.text ?? ""}\n\nActes locaux candidats :\n${cands.map((c) => `#${c.id} [${c.collectivite}] ${c.title}\n${c.excerpt}`).join("\n\n")}`,

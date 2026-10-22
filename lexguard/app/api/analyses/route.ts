@@ -11,7 +11,7 @@ const Body = z.object({
   collectivite: z.string().max(200).optional().nullable(),
   date_acte: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable().or(z.literal("")),
   mode: z.enum(["controle", "exploration"]).default("controle"),
-  model: z.string().refine((m) => MODEL_CHOICES.some((c) => c.id === m), "modèle inconnu").default("jev"),
+  model: z.string().refine((m) => MODEL_CHOICES.some((c) => c.id === m), "modèle inconnu").default("gpt-6-luna"),
   cadrage: z.record(z.string(), z.string().max(500)).optional().nullable(),
 });
 

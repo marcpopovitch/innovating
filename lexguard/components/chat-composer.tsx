@@ -306,7 +306,7 @@ function ModelMenu({ model, onPick, onClose }: { model: ModelId; onPick: (id: Mo
                   {i === 0 && <span className="rounded-full bg-gradient-to-r from-[#ff2e2e] to-[#ff7a2e] px-2 py-0.5 text-[10.5px] font-semibold text-white">Recommandé</span>}
                 </span>
                 <span className="block truncate text-[12px] text-muted">
-                  {choice.hint.replace(/^Recommandé · /, "")} · {choice.price[0] === 0 ? "prix du modèle choisi par le routeur" : `${fmtPrice(choice.price[0])} $ / ${fmtPrice(choice.price[1])} $ par M tokens`}
+                  {choice.hint.replace(/^Recommandé · /, "")} · {fmtPrice(choice.price[0])} $ / {fmtPrice(choice.price[1])} $ par M tokens
                 </span>
               </span>
               {selected && (

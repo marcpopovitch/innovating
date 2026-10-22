@@ -56,7 +56,7 @@ export async function cadrer(prompt: string): Promise<CadrageResponse> {
     const meter = new CostMeter();
     const out = await structured(
       meter,
-      MODELS.fast,
+      MODELS.router,
       "low",
       "Tu prépares le travail d'agents juridiques pour une mairie ou une préfecture. Deux modes : « controle » si l'utilisateur fournit un texte presque prêt (arrêté, délibération, projet de décret) à vérifier ; « exploration » s'il a une idée et veut savoir ce qui existe déjà. Propose au plus 2 questions propres à la demande, qui changent vraiment la recherche ; jamais de question sur le domaine, la période ou le périmètre (déjà posées).",
       prompt.slice(0, 20_000),
