@@ -17,13 +17,9 @@ const MARKERS: GlobeMarker[] = [
   { id: "saint-denis", location: [-20.8789, 55.4481], label: "La Réunion" },
 ];
 
+// Pas d'arcs entre villes de métropole (trop courts, ils faisaient un nœud) :
+// seulement les liaisons longues, Paris → outre-mer.
 const ARCS: GlobeArc[] = [
-  { id: "ue", from: [50.8503, 4.3517], to: [48.8566, 2.3522] },
-  { id: "jo-lyon", from: [48.8566, 2.3522], to: [45.764, 4.8357] },
-  { id: "jo-marseille", from: [48.8566, 2.3522], to: [43.2965, 5.3698] },
-  { id: "jo-bordeaux", from: [48.8566, 2.3522], to: [44.8378, -0.5792] },
-  { id: "jo-rennes", from: [48.8566, 2.3522], to: [48.1173, -1.6778] },
-  { id: "jo-strasbourg", from: [48.8566, 2.3522], to: [48.5734, 7.7521] },
   { id: "jo-cayenne", from: [48.8566, 2.3522], to: [4.9224, -52.3135] },
   { id: "jo-reunion", from: [48.8566, 2.3522], to: [-20.8789, 55.4481] },
 ];
@@ -32,5 +28,20 @@ const ARCS: GlobeArc[] = [
 const FRANCE_PHI = Math.PI - ((2.35 * Math.PI) / 180 - Math.PI / 2);
 
 export function FranceGlobe({ className = "" }: { className?: string }) {
-  return <Globe markers={MARKERS} arcs={ARCS} phi={FRANCE_PHI} theta={0.45} speed={0.0002} scale={1.15} className={className} />;
+  return (
+    <Globe
+      markers={MARKERS}
+      arcs={ARCS}
+      phi={FRANCE_PHI}
+      theta={0.32}
+      speed={0.0002}
+      scale={1}
+      mapSamples={40000}
+      mapBrightness={5}
+      markerSize={0.016}
+      arcWidth={0.7}
+      arcHeight={0.28}
+      className={className}
+    />
+  );
 }
