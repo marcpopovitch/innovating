@@ -4,7 +4,6 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { tracedQuery } from "../db";
 import { htmlToText, legifranceArticleUrl } from "../dila";
-import { recentEuActs } from "../sources/eurlex";
 
 export interface ArticleHit {
   id: string;
@@ -198,59 +197,6 @@ export function makeResearchTools(actor: string, state: ResearchState, niveauxPa
         const text = htmlToText(html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ""));
         await tracedQuery(actor, "EUR-Lex", `CELEX ${celex} (${Date.now() - t0} ms)`, "select 1");
         return `${url}\n${text.slice(0, 8000)}`;
-      },
-    }),
-    betaZodTool({
-      name: "eu_recent_acts",
-      description:
-        "Liste les actes de l'Union européenne récents (règlements, directives) avec leur identifiant CELEX, via EUR-Lex (SPARQL CELLAR, sans clé), par date décroissante. Sert à repérer une norme UE supérieure — règlement directement applicable ou directive à transposer — à confronter à l'acte ; lis ensuite le texte avec fetch_eu_act(celex).",
-      inputSchema: z.object({ since: z.string().optional().describe("Date minimale AAAA-MM-JJ (défaut 2025-01-01)") }),
-      run: async ({ since }) => {
-        const t0 = Date.now();
-        try {
-          const acts = await recentEuActs(since ?? "2025-01-01", 15);
-          await tracedQuery(actor, "EUR-Lex (SPARQL)", `actes UE depuis ${since ?? "2025-01-01"} (${Date.now() - t0} ms)`, "select 1");
-          return acts.length ? acts.map((a) => `CELEX ${a.celex} | ${a.date}`).join("\n") : "Aucun acte UE pour cette période.";
-        } catch (e) {
-          return `EUR-Lex indisponible (${e instanceof Error ? e.message : "erreur"}).`;
-        }
-      },
-    }),
-    betaZodTool({
-      name: "web_search",
-      description:
-        "Recherche web (Keenable) — complément au corpus pour la jurisprudence, la doctrine, les circulaires, ou vérifier l'état d'un texte absent de la base DILA. Option `site` pour se restreindre à une source officielle (ex. « legifrance.gouv.fr », « conseil-etat.fr », « senat.fr »). Jamais pour inventer : cite l'URL renvoyée.",
-      inputSchema: z.object({
-        query: z.string(),
-        site: z.string().optional().describe("Restreint à un domaine, ex. « legifrance.gouv.fr »"),
-      }),
-      run: async ({ query, site }) => {
-        const key = process.env.KEENABLE_API_KEY;
-        if (!key) return "Recherche web indisponible (KEENABLE_API_KEY non configurée).";
-        const t0 = Date.now();
-        try {
-          const res = await fetch("https://api.keenable.ai/v1/search", {
-            method: "POST",
-            headers: { "content-type": "application/json", "x-api-key": key },
-            // site: undefined est omis par JSON.stringify ; on tronque côté serveur pour épargner des tokens.
-            body: JSON.stringify({ query, site, max_results: 6, snippet_max_length: 600 }),
-            signal: AbortSignal.timeout(20_000),
-          });
-          if (!res.ok) return `Recherche web : erreur ${res.status}.`;
-          const data = (await res.json()) as {
-            results?: Array<{ title?: string; url?: string; description?: string; snippet?: string; published_at?: string }>;
-          };
-          const arr = data.results ?? [];
-          await tracedQuery(actor, "recherche web (Keenable)", `« ${query} »${site ? ` site:${site}` : ""} (${Date.now() - t0} ms)`, "select 1");
-          const rows = arr.map((r) => {
-            const date = r.published_at ? ` (${r.published_at.slice(0, 10)})` : "";
-            const body = (r.snippet || r.description || "").replace(/\s+/g, " ");
-            return `${r.title ?? r.url ?? ""}${date}\n   ${r.url ?? ""}\n   ${body}`;
-          });
-          return rows.length ? rows.join("\n") : "Aucun résultat web.";
-        } catch (e) {
-          return `Recherche web indisponible (${e instanceof Error ? e.message : "erreur"}).`;
-        }
       },
     }),
     betaZodTool({

@@ -1,34 +1,26 @@
 @import "tailwindcss";
 
-/* Design system LexGuard : minimaliste, institutionnel (esprit Jony Ive).
-   Neutres OKLCH, un seul accent (azur institutionnel), ombres douces. Les classes
-   `fl-*` sont conservées ; seules les valeurs de tokens changent. */
+/* Design system inspiré de Fastlane : fond blanc, Geist, rouge vif pour l'action. */
 :root {
-  --ink: oklch(22% 0.012 265);
-  --ink-soft: oklch(28% 0.012 265);
-  --body: oklch(46% 0.012 265);
-  --muted: oklch(62% 0.01 265);
-
-  /* accent unique (ex-« rouge » Fastlane → azur institutionnel) */
-  --red: oklch(55% 0.15 255);
-  --red-deep: oklch(48% 0.16 255);
-  --orange: oklch(70% 0.13 235);
-  --accent: var(--red);
-  --accent-deep: var(--red-deep);
-  --accent-glow: color-mix(in oklch, var(--accent) 30%, transparent);
-
-  --bg: oklch(99.2% 0.002 255);
-  --bg-warm: oklch(98% 0.004 255);
-  --bg-warm-2: oklch(96.3% 0.005 255);
-  --card: oklch(97.2% 0.004 255);
-  --card-2: oklch(95.5% 0.006 255);
-  --black: oklch(15% 0.01 265);
-  --line: oklch(22% 0.012 265 / 0.08);
-  --line-2: oklch(22% 0.012 265 / 0.14);
-  --ok: oklch(58% 0.14 150);
-  --shadow-sm: 0 1px 2px oklch(22% 0.03 265 / 0.06), 0 1px 1px oklch(22% 0.03 265 / 0.04);
-  --shadow-md: 0 10px 30px oklch(22% 0.03 265 / 0.08), 0 2px 8px oklch(22% 0.03 265 / 0.05);
-  --shadow-lg: 0 30px 60px oklch(22% 0.03 265 / 0.12), 0 8px 20px oklch(22% 0.03 265 / 0.06);
+  --ink: #121111;
+  --ink-soft: #1d1d1f;
+  --body: #51515a;
+  --muted: #8a8a90;
+  --red: #ff2e2e;
+  --red-deep: #e01d1d;
+  --orange: #ff6a00;
+  --bg: #ffffff;
+  --bg-warm: #faf8f6;
+  --bg-warm-2: #f3efec;
+  --card: #f4f2f0;
+  --card-2: #efe9e5;
+  --black: #050505;
+  --line: #00000014;
+  --line-2: #0000001f;
+  --ok: #1f8a4c;
+  --shadow-sm: 0 1px 2px #0000000f, 0 1px 1px #0000000a;
+  --shadow-md: 0 10px 30px #00000014, 0 2px 8px #0000000a;
+  --shadow-lg: 0 30px 60px #0000001f, 0 8px 20px #0000000f;
   --maxw: 1180px;
 }
 
@@ -39,7 +31,6 @@
   --color-red: var(--red);
   --color-red-deep: var(--red-deep);
   --color-orange: var(--orange);
-  --color-accent: var(--accent);
   --color-warm: var(--bg-warm);
   --color-warm-2: var(--bg-warm-2);
   --color-card: var(--card);
@@ -64,8 +55,6 @@ body {
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   font-size: 16px;
   line-height: 1.5;
-  letter-spacing: -0.011em;
-  -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
 }
 
@@ -77,16 +66,6 @@ h4 {
   line-height: 0.98;
   letter-spacing: -0.03em;
   color: var(--ink);
-}
-
-::selection {
-  background: color-mix(in oklch, var(--accent) 22%, transparent);
-}
-
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 4px;
 }
 
 }
@@ -170,13 +149,13 @@ h4 {
   font-size: 14px;
 }
 .fl-btn--red {
-  background: var(--accent);
-  box-shadow: 0 6px 18px var(--accent-glow);
+  background: var(--red);
+  box-shadow: 0 6px 18px #ff2e2e52;
 }
 .fl-btn--red:hover:not(:disabled) {
-  background: var(--accent-deep);
+  background: var(--red-deep);
   transform: translateY(-1px);
-  box-shadow: 0 10px 26px color-mix(in oklch, var(--accent) 42%, transparent);
+  box-shadow: 0 10px 26px #ff2e2e6b;
 }
 .fl-btn--ghost {
   background: #fff;
@@ -214,12 +193,12 @@ h4 {
   height: 68px;
   padding: 0 38px;
   border-radius: 14px;
-  background: var(--accent);
+  background: var(--red);
   color: #fff;
   font-size: 21px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  box-shadow: 0 12px 32px var(--accent-glow);
+  box-shadow: 0 12px 32px #ff2e2e5c;
   transition: transform 0.18s, box-shadow 0.18s, background 0.18s;
 }
 .hero__bigcta::after {
@@ -231,9 +210,9 @@ h4 {
   pointer-events: none;
 }
 .hero__bigcta:hover {
-  background: var(--accent-deep);
+  background: var(--red-deep);
   transform: translateY(-2px);
-  box-shadow: 0 18px 44px color-mix(in oklch, var(--accent) 46%, transparent);
+  box-shadow: 0 18px 44px #ff2e2e75;
 }
 .hero__bigcta .fl-btn__arrow {
   width: 34px;
@@ -277,8 +256,8 @@ h4 {
 }
 .fl-input:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 16%, transparent);
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px #1211110f;
 }
 
 .fl-badge {
