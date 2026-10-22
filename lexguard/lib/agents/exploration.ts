@@ -2,12 +2,11 @@
 // existe déjà. Planificateur → chercheurs par angle (parallèles) → cartographe,
 // puis les mêmes contrôles en code des citations que pour un contrôle.
 import { randomUUID } from "node:crypto";
-import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { db } from "../db";
 import type { Citation, Disposition } from "../types";
 import { emit } from "./events";
-import { anthropic, type CostMeter, FALLBACK, MODELS } from "./llm";
+import { type CostMeter, MODELS, structured } from "./llm";
 import { articleBlock, researcher } from "./roles";
 import { getArticles, sourceUrl } from "./tools";
 import { checkCitation } from "./verify";
@@ -33,16 +32,16 @@ const Carte = z.object({
 
 export async function runExploration(analysisId: string, meter: CostMeter, idea: string, cadrage: string, consulted: Set<string>) {
   await emit(analysisId, "analyste", "etape", "Découpage de l'idée en angles de recherche");
-  const planRes = await anthropic().beta.messages.parse({
-    model: MODELS.fast,
-    max_tokens: 4000,
-    output_config: { effort: "low", format: betaZodOutputFormat(Plan) },
-    ...FALLBACK,
-    system: "Tu prépares une recherche juridique pour une collectivité qui a une idée de mesure. Découpe-la en 3 ou 4 angles de recherche complémentaires et précis.",
-    messages: [{ role: "user", content: `${idea}${cadrage}` }],
-  });
-  meter.add(MODELS.fast, planRes.usage);
-  const angles = (planRes.parsed_output?.angles ?? [{ angle: idea, pourquoi: "demande initiale" }]).slice(0, 4);
+  const plan = await structured(
+    meter,
+    MODELS.fast,
+    "low",
+    "Tu prépares une recherche juridique pour une collectivité qui a une idée de mesure. Découpe-la en 3 ou 4 angles de recherche complémentaires et précis.",
+    `${idea}${cadrage}`,
+    Plan,
+    4000,
+  ).catch(() => null);
+  const angles = (plan?.angles ?? [{ angle: idea, pourquoi: "demande initiale" }]).slice(0, 4);
   await emit(analysisId, "analyste", "resultat", `${angles.length} angles de recherche`, { angles });
 
   await emit(analysisId, "orchestrateur", "etape", `${angles.length} chercheurs lancés en parallèle`);
@@ -61,17 +60,14 @@ export async function runExploration(analysisId: string, meter: CostMeter, idea:
   await emit(analysisId, "chercheur", "resultat", `${articles.length} textes retenus sur ${consulted.size} consultés`);
 
   await emit(analysisId, "juge", "etape", "Cartographie de ce qui existe déjà");
-  const res = await anthropic().beta.messages.parse({
-    model: MODELS.deep,
-    max_tokens: 16000,
-    output_config: { effort: "high", format: betaZodOutputFormat(Carte) },
-    ...FALLBACK,
-    system: "Tu es juriste en droit public. À partir des seuls textes fournis, dresse l'état du droit sur l'idée de la collectivité : ce qui existe déjà (avec citations mot pour mot) et les vides éventuels. Ne t'appuie jamais sur ta mémoire. Seule la version publiée sur Légifrance fait foi.",
-    messages: [{ role: "user", content: `Idée : ${idea}${cadrage}\n\nNotes des chercheurs :\n${dossiers.map((r) => r.notes).filter(Boolean).join("\n")}\n\nTextes :\n${articleBlock(articles, why)}` }],
-  });
-  meter.add(MODELS.deep, res.usage);
-  const carte = res.parsed_output;
-  if (!carte) throw new Error(`Cartographie inexploitable (${res.stop_reason})`);
+  const carte = await structured(
+    meter,
+    MODELS.deep,
+    "high",
+    "Tu es juriste en droit public. À partir des seuls textes fournis, dresse l'état du droit sur l'idée de la collectivité : ce qui existe déjà (avec citations mot pour mot) et les vides éventuels. Ne t'appuie jamais sur ta mémoire. Seule la version publiée sur Légifrance fait foi.",
+    `Idée : ${idea}${cadrage}\n\nNotes des chercheurs :\n${dossiers.map((r) => r.notes).filter(Boolean).join("\n")}\n\nTextes :\n${articleBlock(articles, why)}`,
+    Carte,
+  );
 
   // Contrôles en code : on ne garde que des citations exactes d'articles en vigueur.
   const byId = new Map(articles.map((a) => [a.id, a]));

@@ -4,8 +4,7 @@
 // Mesures : bon verdict, citations vérifiables, coût, latence. Usage : npm run bench
 import { readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
-import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
-import { anthropic, CostMeter, FALLBACK, MODELS } from "../lib/agents/llm";
+import { CostMeter, hasLlmKey, MODELS, structured } from "../lib/agents/llm";
 import { createAnalysis, runAnalysis } from "../lib/agents/orchestrator";
 import { findByNum } from "../lib/agents/tools";
 import { checkCitation } from "../lib/agents/verify";
@@ -23,16 +22,15 @@ const Baseline = z.object({
 async function baseline(c: Case): Promise<Outcome> {
   const meter = new CostMeter();
   const t0 = Date.now();
-  const res = await anthropic().beta.messages.parse({
-    model: MODELS.deep,
-    max_tokens: 8000,
-    output_config: { effort: "high", format: betaZodOutputFormat(Baseline) },
-    ...FALLBACK,
-    system: "Tu es juriste en droit public. Qualifie la légalité de l'acte (conflit, doublon, vide, incompetence ou conforme) et cite les articles de code qui le prouvent, avec un extrait mot pour mot.",
-    messages: [{ role: "user", content: c.input }],
-  });
-  meter.add(MODELS.deep, res.usage);
-  const out = res.parsed_output!;
+  const out = await structured(
+    meter,
+    MODELS.deep,
+    "high",
+    "Tu es juriste en droit public. Qualifie la légalité de l'acte (conflit, doublon, vide, incompetence ou conforme) et cite les articles de code qui le prouvent, avec un extrait mot pour mot.",
+    c.input,
+    Baseline,
+    8000,
+  );
   let valid = 0;
   for (const cit of out.citations) {
     const [article] = await findByNum("benchmark", cit.num, cit.code.replace(/^code (de la |de l'|du |des |général des )?/i, ""));
@@ -57,8 +55,8 @@ async function lexguard(c: Case): Promise<Outcome> {
 const correct = (c: Case, o: Outcome) => o.verdict === c.expected || (c.expected !== "conforme" && o.verdict !== "conforme" && ["conflit", "incompetence"].includes(c.expected) && ["conflit", "incompetence"].includes(o.verdict));
 
 async function main() {
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
-    console.error("ANTHROPIC_API_KEY manquante : le benchmark appelle Claude.");
+  if (!hasLlmKey()) {
+    console.error("Clé manquante (OPENROUTER_API_KEY ou ANTHROPIC_API_KEY) : le benchmark appelle un modèle.");
     process.exit(1);
   }
   const cases = JSON.parse(readFileSync("bench/cases.json", "utf8")) as Case[];

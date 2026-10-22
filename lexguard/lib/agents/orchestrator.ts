@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { db } from "../db";
 import { legifranceArticleUrl } from "../dila";
-import type { AnalysisSummary, Citation, Disposition, Mode, Severity, Verdict } from "../types";
+import { type AnalysisSummary, type Citation, type Disposition, type Mode, MODEL_CHOICES, type Severity, type Verdict } from "../types";
 import { cadrageText, periodSince } from "./cadrage";
 import { emit } from "./events";
 import { runExploration } from "./exploration";
@@ -34,7 +34,7 @@ export async function createAnalysis(input: AnalysisInput): Promise<string> {
     input.collectivite ?? null,
     input.date_acte || null,
     input.mode ?? "controle",
-    input.model ?? "claude-opus-5-5",
+    input.model ?? "claude-haiku-5-5",
     input.cadrage ? JSON.stringify(input.cadrage) : null,
   ]);
   return id;
@@ -114,7 +114,7 @@ async function analyseDisposition(
 export async function runAnalysis(analysisId: string): Promise<void> {
   const client = await db();
   const { rows } = await client.query<{ model: string }>("select model from analyses where id = $1", [analysisId]);
-  const model = rows[0]?.model && rows[0].model !== "albert" ? rows[0].model : "claude-opus-5-5";
+  const model = rows[0]?.model && MODEL_CHOICES.some((c) => c.id === rows[0].model) ? rows[0].model : "claude-haiku-5-5";
   return withModel(model, () => run(analysisId));
 }
 

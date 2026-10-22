@@ -1,10 +1,9 @@
 // Cadrage : avant de lancer les agents, on précise la demande (domaine, période,
 // périmètre, plus des questions propres à la demande) et on choisit le mode :
 // contrôler un texte presque prêt, ou explorer une idée encore floue.
-import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import type { CadrageQuestion, CadrageResponse, Mode } from "../types";
-import { anthropic, CostMeter, FALLBACK, MODELS } from "./llm";
+import { CostMeter, hasLlmKey, MODELS, structured } from "./llm";
 
 export const BASE_QUESTIONS: CadrageQuestion[] = [
   {
@@ -52,20 +51,18 @@ export async function cadrer(prompt: string): Promise<CadrageResponse> {
     reformulation: guessMode(prompt) === "controle" ? "Vous voulez vérifier ce texte contre le droit en vigueur." : "Vous voulez savoir ce qui existe déjà sur ce sujet.",
     questions: BASE_QUESTIONS,
   };
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) return fallback;
+  if (!hasLlmKey()) return fallback;
   try {
     const meter = new CostMeter();
-    const res = await anthropic().beta.messages.parse({
-      model: MODELS.fast,
-      max_tokens: 2000,
-      output_config: { effort: "low", format: betaZodOutputFormat(Extra) },
-      ...FALLBACK,
-      system:
-        "Tu prépares le travail d'agents juridiques pour une mairie ou une préfecture. Deux modes : « controle » si l'utilisateur fournit un texte presque prêt (arrêté, délibération, projet de décret) à vérifier ; « exploration » s'il a une idée et veut savoir ce qui existe déjà. Propose au plus 2 questions propres à la demande, qui changent vraiment la recherche ; jamais de question sur le domaine, la période ou le périmètre (déjà posées).",
-      messages: [{ role: "user", content: prompt.slice(0, 20_000) }],
-    });
-    const out = res.parsed_output;
-    if (!out) return fallback;
+    const out = await structured(
+      meter,
+      MODELS.fast,
+      "low",
+      "Tu prépares le travail d'agents juridiques pour une mairie ou une préfecture. Deux modes : « controle » si l'utilisateur fournit un texte presque prêt (arrêté, délibération, projet de décret) à vérifier ; « exploration » s'il a une idée et veut savoir ce qui existe déjà. Propose au plus 2 questions propres à la demande, qui changent vraiment la recherche ; jamais de question sur le domaine, la période ou le périmètre (déjà posées).",
+      prompt.slice(0, 20_000),
+      Extra,
+      2000,
+    );
     const domaine = { ...BASE_QUESTIONS[0], default: out.domaine_suggere || null };
     if (domaine.default && !domaine.options.includes(domaine.default)) domaine.options = [domaine.default, ...domaine.options];
     return {

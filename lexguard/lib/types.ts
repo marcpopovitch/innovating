@@ -9,11 +9,19 @@ export type Verdict = "conflit" | "doublon" | "vide" | "incompetence" | "conform
  */
 export type Mode = "controle" | "exploration";
 
-/** Modèles proposés dans l'interface (Albert = LLM de l'État, affiché « bientôt »). */
+/**
+ * Modèles proposés dans l'interface. Tous passent par OpenRouter quand OPENROUTER_API_KEY
+ * est définie (une seule clé, un seul compte de facturation) ; sinon Claude passe par l'API
+ * Anthropic directe. Prix publics OpenRouter (oct. 2026), $ par million de tokens.
+ * Les sous-agents (chercheurs, experts) tournent toujours sur Claude Haiku 5.5 ; le modèle
+ * choisi ici fait le travail de jugement (juge, contradicteur, cartographe).
+ */
 export const MODEL_CHOICES = [
-  { id: "claude-opus-5-5", label: "Claude Opus 5.5", hint: "Le plus rigoureux" },
-  { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", hint: "Plus rapide" },
-  { id: "albert", label: "Albert (État)", hint: "Bientôt", disabled: true },
+  { id: "claude-haiku-5-5", label: "Claude Haiku 5.5", provider: "anthropic", openrouter: "anthropic/claude-haiku-5.5", price: [0.1, 0.5], hint: "Recommandé · le moins cher" },
+  { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", provider: "anthropic", openrouter: "anthropic/claude-sonnet-5.5", price: [2, 10], hint: "Plus rigoureux" },
+  { id: "gpt-6-luna", label: "GPT-6 Luna", provider: "openai", openrouter: "openai/gpt-6-luna", price: [0.1, 0.5], hint: "Économique" },
+  { id: "mistral-large-4", label: "Mistral Large 4", provider: "mistral", openrouter: "mistralai/mistral-large-4-0", price: [1.36, 4.18], hint: "Modèle français" },
+  { id: "gemini-3-8-flash", label: "Gemini 3.8 Flash", provider: "google", openrouter: "google/gemini-3.8-flash", price: [0.825, 4.125], hint: "Rapide" },
 ] as const;
 export type ModelId = (typeof MODEL_CHOICES)[number]["id"];
 
