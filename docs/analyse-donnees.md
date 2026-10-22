@@ -1,13 +1,13 @@
 # Où trouver les données d'une startup, et comment les récupérer
 
-*Analyse du 22 octobre 2026. Elle prend Harmonic comme référence et s'accompagne d'un prototype qui fonctionne (`scout/`).*
+*Analyse du 22 octobre 2026. Elle prend Harmonic comme référence ; les constats sur Alan et Avrea viennent de tests réels sur leurs sites.*
 
 ## En une minute
 
 - **On ne reconstruit pas Harmonic.** Sa base (40 M d'entreprises, LinkedIn, fonds partenaires) coûte 36 à 84 k$/an et ne se scrape pas : c'est contraire à ses CGU, et sa donnée est de toute façon payante. On la branche avec **la clé du fonds** (« bring your own key »).
 - **Ce qu'Harmonic fait mal, et nous bien :** les **registres légaux européens** (comptes déposés, dirigeants, capital, annonces légales), qu'Harmonic n'expose pas ; une **citation vérifiable pour chaque chiffre** ; et une lecture « comité » avec bear case.
 - **En France, tout le socle légal est gratuit :** API Recherche d'entreprises (INSEE et RNE), BODACC, INPI. Le BODACC publie chaque **augmentation de capital**, souvent le signe d'une levée, avant même que la presse en parle.
-- **Le site de la boîte fait le lien entre le web et les registres.** La loi oblige à afficher le SIREN (France), le HRB (Allemagne) ou la raison sociale. Le prototype les lit tout seul, sans IA.
+- **Le site de la boîte fait le lien entre le web et les registres.** La loi oblige à afficher le SIREN (France), le HRB (Allemagne) ou la raison sociale. On peut les lire automatiquement, sans IA.
 - **Il ne faut jamais scraper LinkedIn.** Proxycurl a fermé en juillet 2025 après une action en justice de LinkedIn. Pour les parcours : presse, site, People Data Labs.
 - **Un sous-agent IA par axe d'analyse,** les six en parallèle. Ils partagent un **registre de preuves**, repris du modèle de [`morluto/rea`](https://github.com/morluto/rea). Un chiffre sans preuve est **refusé** par le code, pas seulement déconseillé dans le prompt.
 
@@ -18,15 +18,15 @@
 | Données | Crawl web, LinkedIn (profils non publics), registres non précisés, données envoyées par des fonds et accélérateurs partenaires | Registres officiels européens d'abord, puis le web, puis la clé Harmonic/Dealroom du fonds |
 | Fraîcheur | Effectif chaque semaine, trafic chaque mois ; aucun engagement de délai hors startups financées | Collecte à la demande et suivi dans le temps (séries, pas photos) |
 | Champs forts | `traction_metrics` sur 14 à 365 jours (effectif par département, trafic, abonnés), highlights, investisseurs | Comptes, capital, dirigeants, annonces légales, offres d'emploi, historique du site |
-| API | REST + GraphQL, en-tête `apikey`, environ 10 req/s, MCP officiel (`mcp.api.harmonic.ai`) | Connecteur BYOK prévu dans `scout/src/sources/catalog.ts` |
+| API | REST + GraphQL, en-tête `apikey`, environ 10 req/s, MCP officiel (`mcp.api.harmonic.ai`) | Connecteur BYOK avec la clé du fonds |
 | Scout (leur agent) | LangGraph, recherche en langage naturel, rapports de diligence, Scouts planifiés | Même expérience, mais **chaque chiffre est cliquable vers sa source** et un bear case est produit automatiquement |
 | Angles morts | Petites boîtes européennes, données légales (aucun champ bilan ni bénéficiaire effectif), chiffres de taille de base incohérents d'une page à l'autre | C'est notre terrain |
 
-La capture Scout de la page tarifs d'Avrea fixe le niveau attendu : étapes de recherche visibles, synthèse en tête, tableaux, citation en ligne. Le prototype reprend ces codes et ajoute le registre de preuves complet.
+La capture Scout de la page tarifs d'Avrea fixe le niveau attendu : étapes de recherche visibles, synthèse en tête, tableaux, citation en ligne. Notre fiche doit reprendre ces codes et y ajouter le registre de preuves complet.
 
 ## 2. Les sources, axe par axe
 
-Légende : ✅ branché dans le prototype · 🔑 avec la clé du fonds · ⏳ plus tard · ⛔ à éviter.
+Légende : ✅ à brancher en V1 · 🔑 avec la clé du fonds · ⏳ plus tard · ⛔ à éviter.
 
 ### Snapshot (identité, levées, effectif)
 
@@ -100,7 +100,7 @@ URL ──► Étape 0 · identité (sans IA)
 
 **Pourquoi l'étape 0 n'utilise pas d'IA.** Le site affiche ses identifiants légaux par obligation. Les lire est déterministe, gratuit et sûr. Les agents reçoivent donc dès le départ des faits officiels qu'ils peuvent citer.
 
-**Les outils des sous-agents** (`scout/src/tools.ts`) :
+**Les outils des sous-agents** :
 
 | Outil | Ce qu'il fait |
 |---|---|
@@ -134,16 +134,16 @@ URL ──► Étape 0 · identité (sans IA)
 
 ## 5. Risques et limites
 
-- **Comptes confidentiels.** Beaucoup de jeunes sociétés françaises déposent leurs comptes en confidentialité. Le prototype l'indique comme limite au lieu de conclure « pas de CA ».
-- **Holding ou filiale.** Sur alan.com, le SIREN affiché est celui d'Alan Insurance, la filiale d'assurance. Le site cite aussi « Alan SA ». Le prototype trouve dans le registre la société ALAN (SIREN 818 353 070) au **même siège** et la retient comme entité principale probable. C'est une preuve « déduite », dont le lien capitalistique reste à vérifier.
-- **Hors de France.** Le site d'Avrea cite **deux** raisons sociales : « Avrea Ltd » dans la politique de confidentialité et « Avrea Oy » (forme finlandaise) dans les CGU. Harmonic Scout, lui, la situe à Berlin. Le prototype garde les deux mentions comme preuves ; c'est exactement le genre d'écart qu'un comité veut voir. Il faudra un connecteur au registre finlandais (PRH, gratuit) pour trancher.
+- **Comptes confidentiels.** Beaucoup de jeunes sociétés françaises déposent leurs comptes en confidentialité. Il faut l'indiquer comme limite au lieu de conclure « pas de CA ».
+- **Holding ou filiale.** Sur alan.com, le SIREN affiché est celui d'Alan Insurance, la filiale d'assurance. Le site cite aussi « Alan SA ». On trouve dans le registre la société ALAN (SIREN 818 353 070) au **même siège** et la retient comme entité principale probable. C'est une preuve « déduite », dont le lien capitalistique reste à vérifier.
+- **Hors de France.** Le site d'Avrea cite **deux** raisons sociales : « Avrea Ltd » dans la politique de confidentialité et « Avrea Oy » (forme finlandaise) dans les CGU. Harmonic Scout, lui, la situe à Berlin. Il faut garder les deux mentions comme preuves ; c'est exactement le genre d'écart qu'un comité veut voir. Il faudra un connecteur au registre finlandais (PRH, gratuit) pour trancher.
 - **RGPD.** On ne garde des dirigeants que le nom et la fonction. Pas de scraping de profils personnels.
 - **CGU.** Pas de rétro-ingénierie des API privées (Harmonic, LinkedIn, Welcome to the Jungle). On n'utilise que des API officielles, des endpoints publics prévus pour être lus, ou les clés du client.
 - **Coût d'une fiche.** Environ 6 agents × 5 recherches web, plus les tokens Sonnet, plus une synthèse Opus : quelques dizaines de centimes à 1 € par fiche. À mesurer sur 20 boîtes réelles.
 
 ## 6. Prochaines étapes
 
-1. Faire tourner le prototype sur les 10 boîtes de l'étape 2 de la roadmap et comparer les résultats aux notes des fonds.
+1. Faire tourner la nouvelle version sur les 10 boîtes de l'étape 2 de la roadmap et comparer les résultats aux notes des fonds.
 2. Brancher Companies House, North Data et le registre finlandais PRH (API ouverte) pour couvrir le Royaume-Uni, l'Allemagne et les pays nordiques.
 3. Stocker les preuves dans une base et relancer la collecte chaque semaine, pour obtenir des **séries** : effectif, offres d'emploi, capital.
 4. Candidater à l'API Google Trends.
