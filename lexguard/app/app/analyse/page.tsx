@@ -3,10 +3,11 @@
 // Espace Analyse : une zone de prompt façon chat. L'IA cadre d'abord la demande
 // (questions), puis les agents travaillent (globe animé), puis les résultats s'affichent.
 import { AnimatePresence, motion } from "motion/react";
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { createContext, Suspense, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AGENT_STYLE, SEVERITY_LABEL, VERDICT_STYLE } from "@/components/agent-style";
 import { ChatComposer, MODE_LABEL } from "@/components/chat-composer";
+import { ArticleViewer, type ViewerTarget } from "@/components/article-viewer";
 import { LoadingGlobe } from "@/components/loading-globe";
 import { MODEL_CHOICES, type AgentEvent, type Analysis, type CadrageQuestion, type CadrageResponse, type Finding, type Mode, type ModelId, type Verdict } from "@/lib/types";
 
@@ -69,11 +70,19 @@ interface ConversationItem {
   created_at: string;
 }
 
+// Ouvre le panneau « source » depuis n'importe quelle carte d'alerte.
+const OpenSource = createContext<(t: ViewerTarget) => void>(() => {});
+
 export default function AnalysePage() {
+  const [source, setSource] = useState<ViewerTarget | null>(null);
+  const close = useCallback(() => setSource(null), []);
   return (
-    <Suspense>
-      <ChatView />
-    </Suspense>
+    <OpenSource.Provider value={setSource}>
+      <Suspense>
+        <ChatView />
+      </Suspense>
+      <ArticleViewer target={source} onClose={close} />
+    </OpenSource.Provider>
   );
 }
 
@@ -646,6 +655,7 @@ function Results({ analysis, findings }: { analysis: Analysis | null; findings: 
 }
 
 function FindingCard({ finding, compact = false }: { finding: Finding; compact?: boolean }) {
+  const openSource = useContext(OpenSource);
   const [feedback, setFeedback] = useState<"valide" | "rejete" | null>(null);
   const [sending, setSending] = useState(false);
   const [feedbackError, setFeedbackError] = useState(false);
@@ -690,21 +700,21 @@ function FindingCard({ finding, compact = false }: { finding: Finding; compact?:
       {finding.citations.length > 0 && (
         <div className="mt-4 flex flex-col gap-2">
           {finding.citations.map((c) => (
-            <a
+            <motion.button
+              type="button"
               key={`${c.article_id}-${c.quote.slice(0, 20)}`}
-              href={c.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group block rounded-[10px] border border-line bg-warm px-3.5 py-2.5 transition-colors hover:border-line-2 hover:bg-white"
+              onClick={() => openSource({ articleId: c.article_id, quote: c.quote })}
+              whileHover={{ x: 3 }}
+              className="group block w-full rounded-[10px] border border-line bg-warm px-3.5 py-2.5 text-left transition-colors hover:border-line-2 hover:bg-white"
             >
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[13px] font-medium">
                   Art. {c.num} · <span className="text-body">{c.code}</span>
                 </span>
-                <span className="fl-mono shrink-0 text-[11px] text-muted group-hover:text-red">Légifrance ↗</span>
+                <span className="fl-mono shrink-0 text-[11px] text-muted group-hover:text-red">Voir la source →</span>
               </div>
               <p className="mt-1 text-[13px] leading-relaxed text-body">« {c.quote} »</p>
-            </a>
+            </motion.button>
           ))}
         </div>
       )}
