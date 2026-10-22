@@ -4,6 +4,7 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { tracedQuery } from "../db";
 import { htmlToText, legifranceArticleUrl } from "../dila";
+import { recentEuActs } from "../sources/eurlex";
 
 export interface ArticleHit {
   id: string;
@@ -161,6 +162,22 @@ export function makeResearchTools(actor: string, state: { candidates: Map<string
         const text = htmlToText(html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ""));
         await tracedQuery(actor, "EUR-Lex", `CELEX ${celex} (${Date.now() - t0} ms)`, "select 1");
         return `${url}\n${text.slice(0, 8000)}`;
+      },
+    }),
+    betaZodTool({
+      name: "eu_recent_acts",
+      description:
+        "Liste les actes de l'Union européenne récents (règlements, directives) avec leur identifiant CELEX, via EUR-Lex (SPARQL CELLAR, sans clé), par date décroissante. Sert à repérer une norme UE supérieure — règlement directement applicable ou directive à transposer — à confronter à l'acte ; lis ensuite le texte avec fetch_eu_act(celex).",
+      inputSchema: z.object({ since: z.string().optional().describe("Date minimale AAAA-MM-JJ (défaut 2025-01-01)") }),
+      run: async ({ since }) => {
+        const t0 = Date.now();
+        try {
+          const acts = await recentEuActs(since ?? "2025-01-01", 15);
+          await tracedQuery(actor, "EUR-Lex (SPARQL)", `actes UE depuis ${since ?? "2025-01-01"} (${Date.now() - t0} ms)`, "select 1");
+          return acts.length ? acts.map((a) => `CELEX ${a.celex} | ${a.date}`).join("\n") : "Aucun acte UE pour cette période.";
+        } catch (e) {
+          return `EUR-Lex indisponible (${e instanceof Error ? e.message : "erreur"}).`;
+        }
       },
     }),
     betaZodTool({
