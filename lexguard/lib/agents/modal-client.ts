@@ -52,3 +52,49 @@ export async function callModalCheck(draftText: string): Promise<ModalCheckResul
   }
   return (await res.json()) as ModalCheckResult;
 }
+
+// --- Audit du Journal Officiel par date/période (endpoint POST /jo-audit) ---
+
+export interface JoAuditText {
+  id: string;
+  nature: string;
+  title: string;
+  url: string;
+  findings: ModalFinding[];
+  summary: string;
+  rejected_citations: number;
+}
+
+export interface JoAuditResult {
+  dates: string[];
+  texts_count: number;
+  counts: Record<string, number>;
+  rejected_citations: number;
+  texts: JoAuditText[];
+}
+
+export interface JoAuditParams {
+  date?: string;
+  date_from?: string;
+  date_to?: string;
+  max_texts?: number;
+}
+
+/** Audit de conformité du JO (une date ou une période) via le service Modal. */
+export async function callModalJoAudit(params: JoAuditParams): Promise<JoAuditResult> {
+  const base = process.env.MODAL_AGENTS_URL;
+  if (!base) throw new ModalNotConfiguredError("MODAL_AGENTS_URL n'est pas configurée côté serveur.");
+
+  const res = await fetch(`${base.replace(/\/$/, "")}/jo-audit`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(params),
+    signal: AbortSignal.timeout(600_000), // un audit enchaîne plusieurs analyses
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Service Modal (${res.status})${detail ? ` : ${detail.slice(0, 300)}` : ""}`);
+  }
+  return (await res.json()) as JoAuditResult;
+}

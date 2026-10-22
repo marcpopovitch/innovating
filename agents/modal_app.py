@@ -26,7 +26,7 @@ image = (
 @app.function(
     image=image,
     secrets=[modal.Secret.from_name("ciceron")],
-    timeout=150,            # > CHECK_TIMEOUT_S (les fetch web sont plus lents que le mock)
+    timeout=600,            # /check ~60 s ; /jo-audit enchaîne plusieurs check() -> marge large
     # min_containers=1,     # décommenter pour une démo sans cold start (coûte un peu plus)
 )
 @modal.concurrent(max_inputs=8)   # plusieurs analyses /check en parallèle par conteneur
