@@ -40,6 +40,13 @@ export async function createAnalysis(input: AnalysisInput): Promise<string> {
   return id;
 }
 
+/** Fraîcheur du corpus : date du dernier incrément LEGI chargé (ex. "2026-10-21"), null si inconnue. */
+export async function corpusAsOf(): Promise<string | null> {
+  const client = await db();
+  const { rows } = await client.query<{ value: string }>("select value from meta where key = 'legi_a_jour_au'");
+  return rows[0]?.value ?? null;
+}
+
 interface StoredFinding {
   verdict: Verdict;
   severity: Severity;
@@ -130,9 +137,10 @@ async function run(analysisId: string): Promise<void> {
   const since = periodSince(a.cadrage);
   const cadrage = cadrageText(a.cadrage) + (since ? ` Pour la période, utilise le filtre since=${since} de search_corpus et search_jo.` : "");
   const finish = async (headline: string, summary: AnalysisSummary) => {
+    const withFreshness: AnalysisSummary = { ...summary, corpus_as_of: await corpusAsOf().catch(() => null) };
     await client.query("update analyses set status = 'termine', summary = $2, cost_usd = $3, latency_ms = $4, finished_at = now() where id = $1", [
       analysisId,
-      JSON.stringify(summary),
+      JSON.stringify(withFreshness),
       meter.usd.toFixed(4),
       Date.now() - t0,
     ]);

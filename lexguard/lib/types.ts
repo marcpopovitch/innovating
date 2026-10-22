@@ -81,6 +81,7 @@ export interface AnalysisSummary {
   counts: Record<Verdict, number>;
   rejected: number; // alertes écartées par le contradicteur
   articles_consulted: number;
+  corpus_as_of?: string | null; // date du dernier incrément LEGI chargé (table meta, clé legi_a_jour_au)
 }
 
 export interface Analysis {
