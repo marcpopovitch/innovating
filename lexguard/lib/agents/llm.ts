@@ -1,6 +1,7 @@
-// Accès aux modèles. Deux fournisseurs, même interface pour les agents :
+// Accès aux modèles. Trois fournisseurs, même interface pour les agents :
+// - OpenAI direct (OPENAI_API_KEY) : les modèles GPT ;
 // - OpenRouter (OPENROUTER_API_KEY) : une seule clé pour Claude, GPT, Mistral, Gemini ;
-// - Anthropic direct (ANTHROPIC_API_KEY) : Claude uniquement.
+// - Anthropic direct (ANTHROPIC_API_KEY) : Claude.
 // Les agents n'appellent que structured() (sortie JSON validée) et toolLoop() (agent à outils).
 import { AsyncLocalStorage } from "node:async_hooks";
 import Anthropic from "@anthropic-ai/sdk";
@@ -30,15 +31,30 @@ export const MODELS = {
   },
 };
 
-export const hasLlmKey = () => !!(process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
-const useOpenRouter = () => !!process.env.OPENROUTER_API_KEY;
+const env = () => ({
+  openai: !!process.env.OPENAI_API_KEY,
+  openrouter: !!process.env.OPENROUTER_API_KEY,
+  anthropic: !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
+});
+export const hasLlmKey = () => Object.values(env()).some(Boolean);
 
 const choice = (id: string) => MODEL_CHOICES.find((m) => m.id === id);
-/** Identifiant à envoyer au fournisseur. Sans OpenRouter, un modèle non-Claude retombe sur Claude Sonnet. */
-function providerModel(id: string): string {
+
+type Route = { kind: "openai" | "openrouter" | "anthropic"; model: string; priceId: string };
+/**
+ * Choisit le fournisseur d'un modèle selon les clés présentes : GPT passe par OpenAI si sa clé
+ * existe, tout le reste par OpenRouter, sinon Claude par Anthropic. Un modèle injoignable
+ * retombe sur un modèle disponible (GPT-6 Luna avec la seule clé OpenAI).
+ */
+function route(id: string): Route {
+  const e = env();
   const c = choice(id);
-  if (useOpenRouter()) return c?.openrouter ?? id;
-  return c?.provider === "anthropic" ? c.id : id.startsWith("claude-") ? id : "claude-sonnet-5-5";
+  if (c?.provider === "openai" && e.openai) return { kind: "openai", model: c.openrouter.replace(/^openai\//, ""), priceId: id };
+  if (e.openrouter) return { kind: "openrouter", model: c?.openrouter ?? id, priceId: id };
+  if (e.anthropic && (c?.provider === "anthropic" || id.startsWith("claude-"))) return { kind: "anthropic", model: id, priceId: id };
+  if (e.openai) return { kind: "openai", model: "gpt-6-luna", priceId: "gpt-6-luna" };
+  if (e.anthropic) return { kind: "anthropic", model: "claude-sonnet-5-5", priceId: "claude-sonnet-5-5" };
+  throw new Error("Aucune clé de modèle (OPENAI_API_KEY, OPENROUTER_API_KEY ou ANTHROPIC_API_KEY).");
 }
 
 // Si un modèle décline pour raison de politique, l'API Anthropic rejoue la requête sur son repli.
@@ -76,18 +92,24 @@ interface ORMessage {
   tool_call_id?: string;
 }
 
-async function openRouter(body: Record<string, unknown>) {
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+/** API « chat completions » (OpenAI et OpenRouter partagent le format). */
+async function chatCompletions(r: Route, body: Record<string, unknown>) {
+  const openai = r.kind === "openai";
+  const { max_tokens, reasoning, ...rest } = body as { max_tokens?: number; reasoning?: { effort: string } } & Record<string, unknown>;
+  const payload = openai
+    ? { ...rest, model: r.model, max_completion_tokens: max_tokens, reasoning_effort: reasoning?.effort }
+    : { ...rest, model: r.model, max_tokens, reasoning };
+  const res = await fetch(openai ? "https://api.openai.com/v1/chat/completions" : "https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
-      authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+      authorization: `Bearer ${openai ? process.env.OPENAI_API_KEY : process.env.OPENROUTER_API_KEY}`,
       "content-type": "application/json",
-      "x-title": "Ciceron",
+      ...(openai ? {} : { "x-title": "Ciceron" }),
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
     signal: AbortSignal.timeout(300_000),
   });
-  if (!res.ok) throw new Error(`OpenRouter ${res.status} : ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) throw new Error(`${openai ? "OpenAI" : "OpenRouter"} ${res.status} : ${(await res.text()).slice(0, 300)}`);
   return (await res.json()) as {
     choices: Array<{ message: ORMessage; finish_reason: string }>;
     usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -99,9 +121,9 @@ const orUsage = (u?: { prompt_tokens?: number; completion_tokens?: number }) => 
 
 /** Un appel, une réponse JSON validée par le schéma Zod. */
 export async function structured<T extends z.ZodType>(meter: CostMeter, model: string, effort: Effort, system: string, user: string, schema: T, maxTokens = 16000): Promise<z.infer<T>> {
-  if (useOpenRouter()) {
-    const res = await openRouter({
-      model: providerModel(model),
+  const r = route(model);
+  if (r.kind !== "anthropic") {
+    const res = await chatCompletions(r, {
       max_tokens: maxTokens,
       reasoning: { effort },
       messages: [
@@ -110,19 +132,19 @@ export async function structured<T extends z.ZodType>(meter: CostMeter, model: s
       ],
       response_format: { type: "json_schema", json_schema: { name: "reponse", strict: true, schema: z.toJSONSchema(schema) } },
     });
-    meter.add(model, orUsage(res.usage));
+    meter.add(r.priceId, orUsage(res.usage));
     const text = res.choices[0]?.message.content ?? "";
     return schema.parse(JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, "")));
   }
   const response = await anthropic().beta.messages.parse({
-    model: providerModel(model),
+    model: r.model,
     max_tokens: maxTokens,
     output_config: { effort, format: betaZodOutputFormat(schema) },
     ...FALLBACK,
     system,
     messages: [{ role: "user", content: user }],
   });
-  meter.add(model, response.usage);
+  meter.add(r.priceId, response.usage);
   if (response.stop_reason === "refusal" || !response.parsed_output) throw new Error(`Réponse inexploitable (${response.stop_reason})`);
   return response.parsed_output as z.infer<T>;
 }
@@ -139,7 +161,8 @@ export interface ToolLoopOptions {
 
 /** Agent à outils : boucle appel → outils → appel, jusqu'à isDone() ou la limite d'itérations. */
 export async function toolLoop(meter: CostMeter, model: string, o: ToolLoopOptions): Promise<void> {
-  if (useOpenRouter()) {
+  const r = route(model);
+  if (r.kind !== "anthropic") {
     const messages: ORMessage[] = [
       { role: "system", content: o.system },
       { role: "user", content: o.user },
@@ -149,8 +172,8 @@ export async function toolLoop(meter: CostMeter, model: string, o: ToolLoopOptio
       return { type: "function", function: { name: def.name, description: def.description, parameters: def.input_schema } };
     });
     for (let i = 0; i < o.maxIterations && !o.isDone(); i++) {
-      const res = await openRouter({ model: providerModel(model), max_tokens: 16000, reasoning: { effort: o.effort ?? "medium" }, messages, tools, tool_choice: "auto" });
-      meter.add(model, orUsage(res.usage));
+      const res = await chatCompletions(r, { max_tokens: 16000, reasoning: { effort: o.effort ?? "medium" }, messages, tools, tool_choice: "auto" });
+      meter.add(r.priceId, orUsage(res.usage));
       const msg = res.choices[0]?.message;
       if (!msg) break;
       messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: msg.tool_calls });
@@ -173,7 +196,7 @@ export async function toolLoop(meter: CostMeter, model: string, o: ToolLoopOptio
     return;
   }
   const runner = anthropic().beta.messages.toolRunner({
-    model: providerModel(model),
+    model: r.model,
     max_tokens: 16000,
     max_iterations: o.maxIterations,
     output_config: { effort: o.effort ?? "medium" },
@@ -183,7 +206,7 @@ export async function toolLoop(meter: CostMeter, model: string, o: ToolLoopOptio
     messages: [{ role: "user", content: o.user }],
   });
   for await (const message of runner) {
-    meter.add(model, message.usage);
+    meter.add(r.priceId, message.usage);
     for (const block of message.content) {
       if (block.type === "tool_use" && block.name !== "submit_dossier") o.onToolUse?.(block.name, block.input);
     }
