@@ -97,7 +97,13 @@ export function makeResearchTools(actor: string, state: ResearchState, niveauxPa
         niveau: z.enum(["constitutionnel", "international", "code"]).optional().describe("Restreindre à un niveau de la pyramide des normes"),
       }),
       run: async ({ query, code, since, niveau }) => {
-        const hits = await searchCorpus(actor, query, code, 8, since, niveau ? [niveau] : niveauxParDefaut);
+        // Un numéro d'article (« L253-7 », « R. 2212-1 ») n'est pas un mot : on le cherche aussi par numéro.
+        const nums = [...query.matchAll(/\b([LRDA])\.?\s?(\d{1,4}(?:-\d+)+)\b/g)].map((m) => `${m[1]}${m[2]}`);
+        const exact = (await Promise.all(nums.slice(0, 3).map((n) => findByNum(actor, n, code)))).flat();
+        const hits = [
+          ...exact.map((a) => ({ ...a, snippet: a.text.slice(0, 400) })),
+          ...(await searchCorpus(actor, query, code, 8, since, niveau ? [niveau] : niveauxParDefaut)).filter((h) => !exact.some((a) => a.id === h.id)),
+        ];
         hits.forEach((h) => state.consulted.add(h.id));
         return fmtHits(hits);
       },
@@ -191,6 +197,42 @@ export function makeResearchTools(actor: string, state: ResearchState, niveauxPa
         const text = htmlToText(html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ""));
         await tracedQuery(actor, "EUR-Lex", `CELEX ${celex} (${Date.now() - t0} ms)`, "select 1");
         return `${url}\n${text.slice(0, 8000)}`;
+      },
+    }),
+    betaZodTool({
+      name: "web_search",
+      description:
+        "Recherche web (Keenable) — complément au corpus pour la jurisprudence, la doctrine, les circulaires, ou vérifier l'état d'un texte absent de la base DILA. Jamais pour inventer : cite l'URL renvoyée.",
+      inputSchema: z.object({ query: z.string() }),
+      run: async ({ query }) => {
+        const key = process.env.KEENABLE_API_KEY;
+        if (!key) return "Recherche web indisponible (KEENABLE_API_KEY non configurée).";
+        const t0 = Date.now();
+        try {
+          const res = await fetch("https://api.keenable.ai/v1/search", {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-api-key": key },
+            body: JSON.stringify({ query }),
+            signal: AbortSignal.timeout(20_000),
+          });
+          if (!res.ok) return `Recherche web : erreur ${res.status}.`;
+          const data = (await res.json()) as Record<string, unknown>;
+          const arr = (Array.isArray(data)
+            ? data
+            : (data.results ?? data.data ?? data.hits ?? [])) as Array<Record<string, unknown>>;
+          await tracedQuery(actor, "recherche web (Keenable)", `« ${query} » (${Date.now() - t0} ms)`, "select 1");
+          const rows = arr.slice(0, 6).map((r) => {
+            const title = String(r.title ?? r.name ?? r.url ?? "");
+            const url = String(r.url ?? r.link ?? "");
+            const snippet = String(r.snippet ?? r.content ?? r.description ?? r.text ?? "")
+              .replace(/\s+/g, " ")
+              .slice(0, 280);
+            return `${title}\n   ${url}\n   ${snippet}`;
+          });
+          return rows.length ? rows.join("\n") : "Aucun résultat web.";
+        } catch (e) {
+          return `Recherche web indisponible (${e instanceof Error ? e.message : "erreur"}).`;
+        }
       },
     }),
     betaZodTool({

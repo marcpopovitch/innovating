@@ -135,7 +135,7 @@ export async function critic(meter: CostMeter, d: Disposition, finding: JudgeOut
     meter,
     MODELS.deep,
     "medium",
-    `Tu es l'avocat de la collectivité. Ton rôle est d'attaquer l'alerte du juge : cherche l'erreur de qualification, la norme mal lue, l'exception oubliée, la confusion entre police générale et police spéciale, la date de vigueur. Garde l'alerte seulement si elle est solidement fondée sur les textes fournis. Une préfecture préfère zéro alerte à une fausse alerte. ${SOURCES_RULE}`,
+    `Tu es l'avocat de la collectivité. Ton rôle est d'attaquer l'alerte du juge : cherche l'erreur de qualification, la norme mal lue, l'exception oubliée, la confusion entre police générale et police spéciale, la date de vigueur. Écarte l'alerte (keep=false) seulement si tu identifies une erreur précise et démontrable dans les textes fournis : citation qui ne dit pas ce que le juge affirme, exception expresse qui s'applique, article hors vigueur, mauvaise autorité. Le doute, la prudence ou le fait que l'alerte soit « catégorique » ne suffisent pas : si les textes établissent la règle, garde l'alerte et ajuste seulement la gravité. Une fausse alerte coûte cher, une vraie illégalité manquée aussi. ${SOURCES_RULE}`,
     `Disposition : ${d.text}\n\nAlerte du juge (${finding.verdict}, ${finding.severity}) : ${finding.title}\n${finding.explanation}\nCitations : ${finding.citations.map((c) => `${c.article_id} « ${c.quote} »`).join(" ; ")}\n\nContrôles automatiques : ${codeProblems.length ? codeProblems.join(" ; ") : "citations vérifiées (extraits présents, articles en vigueur)"}\n\nTextes :\n${articleBlock(articles, new Map())}`,
     CritiqueSchema,
   );
@@ -143,12 +143,12 @@ export async function critic(meter: CostMeter, d: Disposition, finding: JudgeOut
 
 // ---------- 5. Rédacteur ----------
 
-const SummarySchema = z.object({ headline: z.string().describe("Synthèse en une ou deux phrases pour le maire ou le préfet") });
+const SummarySchema = z.object({ headline: z.string().describe("Une ou deux phrases complètes qui disent au maire ou au préfet ce qui pose problème et pourquoi, ex. « L'arrêté est illégal : le maire n'est pas compétent pour… ». Jamais un simple titre.") });
 
 export async function writer(meter: CostMeter, title: string, findings: Array<{ verdict: Verdict; severity: Severity; title: string; verified: boolean }>) {
   const kept = findings.filter((f) => f.verified && f.verdict !== "conforme");
   if (!kept.length) return { headline: `Aucune irrégularité démontrée dans « ${title} » au regard des textes consultés.` };
-  return parse(meter, MODELS.router, "low", "Tu rédiges la synthèse d'un contrôle de légalité, en français clair, sans jargon inutile.", `Acte : ${title}\nAlertes retenues :\n${kept.map((f) => `- [${f.severity}] ${f.verdict} : ${f.title}`).join("\n")}`, SummarySchema);
+  return parse(meter, MODELS.router, "low", "Tu rédiges la synthèse d'un contrôle de légalité, en français clair, sans jargon inutile : une conclusion concrète qui nomme le problème principal, pas un titre.", `Acte : ${title}\nAlertes retenues :\n${kept.map((f) => `- [${f.severity}] ${f.verdict} : ${f.title}`).join("\n")}`, SummarySchema);
 }
 
 // ---------- 2 bis. Sous-agents par niveau de la pyramide des normes ----------
