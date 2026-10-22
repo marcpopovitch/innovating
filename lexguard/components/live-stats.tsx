@@ -40,7 +40,7 @@ export function LiveStats() {
         </div>
       ))}
       <p className="col-span-2 text-[13px] text-muted md:col-span-4">
-        {stats?.last_jo_date ? `Dernier Journal officiel ingéré : ${new Date(stats.last_jo_date).toLocaleDateString("fr-FR")}` : "Compteurs lus en direct dans la base de LexGuard."}
+        {stats?.last_jo_date ? `Dernier Journal officiel ingéré : ${new Date(stats.last_jo_date).toLocaleDateString("fr-FR")}` : "Compteurs lus en direct dans la base de Ciceron."}
       </p>
     </div>
   );

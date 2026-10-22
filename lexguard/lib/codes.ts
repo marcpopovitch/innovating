@@ -1,4 +1,4 @@
-// Les codes que LexGuard ingère : ceux que mobilisent les actes des collectivités.
+// Les codes que Ciceron ingère : ceux que mobilisent les actes des collectivités.
 export const CODES: Record<string, string> = {
   LEGITEXT000006070633: "Code général des collectivités territoriales",
   LEGITEXT000006071367: "Code rural et de la pêche maritime",

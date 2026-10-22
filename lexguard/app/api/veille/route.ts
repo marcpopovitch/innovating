@@ -9,7 +9,7 @@ export async function GET() {
   const client = await db();
   const { rows } = await client.query<{ id: string; nature: string | null; title: string; date_publi: string | null; modifies: Array<{ id: string; title: string }> }>(
     // D'abord les textes qui touchent une collectivité suivie, puis ceux qui citent un code
-    // suivi par LexGuard, puis le reste du JO récent.
+    // suivi par Ciceron, puis le reste du JO récent.
     `select j.id, j.nature, j.title, j.date_publi::text, j.modifies from jo_texts j
       where j.nature in ('LOI', 'ORDONNANCE', 'DECRET', 'ARRETE') and j.date_publi >= (select max(date_publi) - 3 from jo_texts)
       order by exists (select 1 from veille_impacts v where v.jo_id = j.id) desc,

@@ -1,7 +1,7 @@
 {
   "name": "innovating",
   "private": true,
-  "description": "Raccourcis : l'application LexGuard vit dans lexguard/",
+  "description": "Raccourcis : l'application Ciceron vit dans lexguard/",
   "scripts": {
     "dev": "npm --prefix lexguard run dev",
     "build": "npm --prefix lexguard run build",

@@ -105,7 +105,7 @@ export default function Home() {
                 <div>
                   <span className="fl-eyebrow">Mémoire</span>
                   <p className="mt-2 max-w-[62ch] text-body">
-                    Chaque alerte validée ou rejetée par un juriste devient de la doctrine interne. Les agents la relisent avant de juger le prochain acte : LexGuard s&apos;améliore à chaque utilisation.
+                    Chaque alerte validée ou rejetée par un juriste devient de la doctrine interne. Les agents la relisent avant de juger le prochain acte : Ciceron s&apos;améliore à chaque utilisation.
                   </p>
                 </div>
                 <Link href="/app/analyse" className="fl-btn fl-btn--ghost shrink-0">
@@ -120,7 +120,7 @@ export default function Home() {
         <section className="fl-section bg-warm">
           <div className="fl-container">
             <Reveal>
-              <p className="fl-eyebrow">Ce que LexGuard détecte</p>
+              <p className="fl-eyebrow">Ce que Ciceron détecte</p>
               <h2 className="fl-h2 mt-4 max-w-[16ch]">Quatre risques, une seule vérification.</h2>
             </Reveal>
             <div className="mt-14 grid gap-4 sm:grid-cols-2">

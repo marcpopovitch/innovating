@@ -6,7 +6,7 @@ async function main() {
   const c = await db();
   const q = async (sql: string) => (await c.query(sql)).rows;
   const line = (s = "") => console.log(s);
-  line("LEXGUARD GOV — LA COUCHE DE DONNÉES EN ACTION");
+  line("CICERON — LA COUCHE DE DONNÉES EN ACTION");
   line(`Généré le ${new Date().toISOString()} · base : ${process.env.DATABASE_URL ? "Aiven PostgreSQL" : "PGlite (Postgres local)"}`);
   line();
   line("1. CORPUS (dump DILA LEGI + incréments quotidiens, toutes versions datées)");

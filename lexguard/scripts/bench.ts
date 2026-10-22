@@ -1,6 +1,6 @@
 // Benchmark avant/après sur des cas réels étiquetés (bench/cases.json).
 // « Avant » : un seul appel à Claude, sans corpus ni outils (ce qu'un agent territorial ferait avec un chatbot).
-// « Après » : l'équipe d'agents LexGuard sur le corpus DILA.
+// « Après » : l'équipe d'agents Ciceron sur le corpus DILA.
 // Mesures : bon verdict, citations vérifiables, coût, latence. Usage : npm run bench
 import { readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
@@ -83,11 +83,11 @@ async function main() {
   const before = agg((r) => r.before);
   const after = agg((r) => r.after);
   const pct = (x: number) => `${Math.round(x * 100)} %`;
-  const md = `# Benchmark LexGuard — ${new Date().toISOString().slice(0, 16).replace("T", " ")}
+  const md = `# Benchmark Ciceron — ${new Date().toISOString().slice(0, 16).replace("T", " ")}
 
 ${rows.length} actes réels ou inspirés de contentieux connus (bench/cases.json), verdict attendu fixé à l'avance.
 
-| | Avant : un appel Claude sans données | Après : équipe d'agents LexGuard |
+| | Avant : un appel Claude sans données | Après : équipe d'agents Ciceron |
 |---|---|---|
 | Bon verdict | ${pct(before.accuracy)} | ${pct(after.accuracy)} |
 | Citations vérifiables (article existant, en vigueur, extrait exact) | ${pct(before.citation_validity)} | ${pct(after.citation_validity)} |

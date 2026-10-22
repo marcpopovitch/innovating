@@ -1,4 +1,4 @@
--- Schéma LexGuard. Compatible PostgreSQL 16+ (Aiven) et PGlite (local).
+-- Schéma Ciceron. Compatible PostgreSQL 16+ (Aiven) et PGlite (local).
 create extension if not exists pg_trgm;
 
 -- Corpus : articles de codes (dump DILA LEGI), toutes versions datées.

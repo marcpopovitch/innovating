@@ -44,7 +44,7 @@ export default function VeillePage() {
         )}
       </div>
       <p className="fl-lead mt-4 max-w-[60ch]">
-        Chaque nuit, LexGuard ingère l&apos;incrément officiel du Journal officiel (DILA), repère les articles modifiés et croise chaque texte avec les actes des collectivités suivies.
+        Chaque nuit, Ciceron ingère l&apos;incrément officiel du Journal officiel (DILA), repère les articles modifiés et croise chaque texte avec les actes des collectivités suivies.
       </p>
 
       <div className="mt-10 flex flex-col gap-3">

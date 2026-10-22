@@ -1,8 +1,8 @@
-# LexGuard Gov
+# Ciceron
 
 **Chaque arrêté vérifié contre tout le droit en vigueur, avant signature.**
 
-LexGuard aide les mairies et les préfectures (contrôle de légalité) à repérer, dans un acte local ou dans un texte qui vient de paraître au Journal officiel, les **conflits de normes**, **incompétences**, **doublons** et **vides juridiques**. Chaque alerte cite l'article exact, en vigueur, avec un extrait vérifié mot pour mot, et renvoie vers Légifrance.
+Ciceron aide les mairies et les préfectures (contrôle de légalité) à repérer, dans un acte local ou dans un texte qui vient de paraître au Journal officiel, les **conflits de normes**, **incompétences**, **doublons** et **vides juridiques**. Chaque alerte cite l'article exact, en vigueur, avec un extrait vérifié mot pour mot, et renvoie vers Légifrance.
 
 Projet du hackathon AI Innovate Paris (22/10/2026, Accel × Iterate).
 

@@ -119,7 +119,7 @@ export async function runAnalysis(analysisId: string): Promise<void> {
     ]);
     // Mémoire : l'acte analysé rejoint le corpus local de la collectivité (détection de doublons futurs).
     if (a.collectivite) {
-      await client.query("insert into local_acts (collectivite, title, date_acte, text, source) values ($1, $2, $3, $4, 'analyse LexGuard')", [a.collectivite, a.title, a.date_acte, a.input]);
+      await client.query("insert into local_acts (collectivite, title, date_acte, text, source) values ($1, $2, $3, $4, 'analyse Ciceron')", [a.collectivite, a.title, a.date_acte, a.input]);
     }
     await emit(analysisId, "orchestrateur", "fin", headline, { cost_usd: meter.usd, latency_ms: Date.now() - t0, calls: meter.calls });
   } catch (error) {

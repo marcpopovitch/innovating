@@ -8,7 +8,7 @@ export function Logo({ href = "/", light = false }: { href?: string; light?: boo
         <path d="M12 2.5 4 5.5v6.2c0 4.6 3.4 8.6 8 9.8 4.6-1.2 8-5.2 8-9.8V5.5l-8-3Z" fill="#ff2e2e" />
         <path d="m8.5 12 2.4 2.4 4.6-4.8" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
-      <span className="text-[17px]">LexGuard</span>
+      <span className="text-[17px]">Ciceron</span>
     </Link>
   );
 }
