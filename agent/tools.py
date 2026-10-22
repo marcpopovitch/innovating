@@ -83,8 +83,9 @@ class Toolbox:
     # -- outils
     def get_startup_profile(self) -> dict:
         url = profile_source(self.startup)
-        self.seen[url] = self.startup.get("fetched_at") or db.now()
-        return {**{k: self.startup.get(k) for k in db.STARTUP_FIELDS}, "source_url": url}
+        fetched_at = self.startup.get("fetched_at") or db.now()
+        self.seen[url] = fetched_at
+        return {**{k: self.startup.get(k) for k in db.STARTUP_FIELDS}, "source_url": url, "fetched_at": fetched_at}
 
     def get_stored_facts(self, pod: str | None = None) -> list[dict]:
         limit = db.now() - timedelta(days=FACT_MAX_AGE_DAYS)
