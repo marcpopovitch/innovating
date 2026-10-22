@@ -1,12 +1,12 @@
-import { cookies, headers } from "next/headers";
-import { DEFAULT_LANG, fromAcceptLanguage, isLang, LANG_COOKIE, type Lang } from "./config";
+import { cookies } from "next/headers";
+import { DEFAULT_LANG, isLang, LANG_COOKIE, type Lang } from "./config";
 import { makeT } from "./translate";
 
-// Langue choisie (cookie), sinon langue du navigateur, sinon français.
+// Langue choisie (cookie), sinon anglais : le site s'ouvre en anglais quelle que soit la langue du navigateur.
 export async function getLang(): Promise<Lang> {
   const saved = (await cookies()).get(LANG_COOKIE)?.value;
   if (isLang(saved)) return saved;
-  return fromAcceptLanguage((await headers()).get("accept-language")) ?? DEFAULT_LANG;
+  return DEFAULT_LANG;
 }
 
 export async function getT() {
