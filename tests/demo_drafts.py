@@ -22,11 +22,12 @@ Article 1er : Les engins de déplacement personnel motorisés ne peuvent transpo
 Article 2 : Le port du casque et du gilet de haute visibilité de couleur jaune fluo est obligatoire
 pour toute personne circulant en engin de déplacement personnel motorisé sur le territoire de la commune.""",
 
-    # Vide : aucun texte de la base ne traite de l'assurance ni des données des opérateurs.
+    # Vide : aucun texte de la base ne traite des données des opérateurs ni de leur assurance.
     "vide_operateurs": """Projet d'arrêté relatif aux trottinettes électriques en libre-service.
 Article 1er : Les opérateurs de trottinettes électriques en libre-service transmettent chaque mois
 à la mairie les données anonymisées de trajets de leurs engins.
-Article 2 : Tout manquement est puni de l'amende prévue pour les contraventions de la 4e classe.""",
+Article 2 : Les opérateurs souscrivent une assurance couvrant la responsabilité civile des utilisateurs
+de leurs engins.""",
 }
 
 

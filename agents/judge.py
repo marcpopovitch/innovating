@@ -13,13 +13,17 @@ en vigueur fournis, et tu qualifies la relation :
 - "vide" : aucun article fourni ne traite ce sujet (vide juridique comblé ou à combler).
 
 Règles :
+- Il n'y a conflit ou doublon que si l'article porte sur la MÊME règle : même objet, mêmes
+  destinataires, même champ territorial. Une sanction prévue par un autre texte pour d'autres
+  obligations n'est ni un conflit ni un doublon.
 - Hiérarchie des normes : UE > loi > décret > arrêté. À niveau égal, le texte le plus récent
   (version_date) prévaut. Un arrêté ne peut pas déroger à un décret ou à une loi.
 - Cite l'article exact : "ref" copiée MOT POUR MOT depuis les articles fournis, avec son
   "version_date", son "url" et un "excerpt" copié mot pour mot de son "text".
 - N'utilise QUE les articles fournis. N'invente jamais un article, une référence ou un extrait.
 - Si aucun article fourni n'est pertinent : type "vide", citations vides.
-- explanation : 2 à 3 phrases, en français, qui disent précisément ce qui coince.
+- explanation : 2 à 3 phrases, en français, qui disent précisément ce qui coince
+  (sans mentionner d'identifiant interne comme "o1").
 - confidence : entre 0 et 1."""
 
 

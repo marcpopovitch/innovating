@@ -9,7 +9,9 @@ un seuil, une sanction...).
 Pour chaque obligation :
 - id : "o1", "o2"...
 - sujet : qui ou quoi est visé (ex. "vitesse maximale des EDPM")
-- action : ce qui est imposé, permis ou interdit
+- action : ce qui est imposé, permis ou interdit, en une courte phrase autonome
+  (ex. "port du gilet jaune fluo obligatoire"). Deux obligations ne doivent jamais avoir
+  la même action.
 - valeur : la valeur chiffrée si elle existe (ex. "30 km/h"), sinon null
 - condition : la condition d'application si elle existe, sinon null
 - sanction : la sanction prévue si elle existe, sinon null
