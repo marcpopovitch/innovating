@@ -2,7 +2,7 @@
 // aux collectivités, puis applique les incréments quotidiens pour être à jour.
 // Usage : npm run ingest:legi -- [chemin du dump .tar.gz] [nombre d'incréments]
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CODES } from "../lib/codes";
 import { db } from "../lib/db";
@@ -80,8 +80,11 @@ async function main() {
     extract(dump, out);
     writeFileSync(join(out, ".done"), new Date().toISOString());
   }
-  log(`Chargement du corpus…`);
-  log(`${await load(out, log)} articles chargés depuis le dump`);
+  if (!existsSync(join(out, ".loaded"))) {
+    log(`Chargement du corpus…`);
+    log(`${await load(out, log)} articles chargés depuis le dump`);
+    writeFileSync(join(out, ".loaded"), new Date().toISOString());
+  }
 
   // Incréments quotidiens postérieurs au dump : le corpus colle au droit du jour.
   const listing = await (await fetch(BASE)).text();
@@ -92,10 +95,27 @@ async function main() {
   // Téléchargement en parallèle (8 à la fois), application dans l'ordre chronologique.
   mkdirSync(join(DIR, "legi_increments"), { recursive: true });
   const queue = files.filter((f) => !existsSync(join(DIR, "legi_increments", f)));
+  const download = async (file: string) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const res = await fetch(BASE + file, { signal: AbortSignal.timeout(120_000) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const tmp = join(DIR, "legi_increments", `${file}.part`);
+        writeFileSync(tmp, Buffer.from(await res.arrayBuffer()));
+        renameSync(tmp, join(DIR, "legi_increments", file)); // jamais de fichier à moitié écrit
+        return;
+      } catch (error) {
+        if (attempt >= 5) throw error;
+        await new Promise((r) => setTimeout(r, 1000 * attempt));
+      }
+    }
+  };
+  let done = 0;
   await Promise.all(
-    Array.from({ length: 8 }, async () => {
+    Array.from({ length: 4 }, async () => {
       for (let file = queue.shift(); file; file = queue.shift()) {
-        writeFileSync(join(DIR, "legi_increments", file), Buffer.from(await (await fetch(BASE + file)).arrayBuffer()));
+        await download(file);
+        if (++done % 50 === 0) log(`  ${done} incréments téléchargés…`);
       }
     }),
   );
