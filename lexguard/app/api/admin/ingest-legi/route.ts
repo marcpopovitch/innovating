@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   const log = (m: string) => appendFileSync(logFile, `${m}\n`);
   // ?job=hierarchie : Constitution, codes supplémentaires, CEDH/UE, Conseil d'État.
   const job = new URL(request.url).searchParams.get("job");
-  void (job === "hierarchie" ? ingestHierarchy(log, false) : ingestLegi(undefined, "all", log, false))
+  void (job === "hierarchie" ? ingestHierarchy(log, false) : job === "hierarchie-suite" ? ingestHierarchy(log, false, true) : ingestLegi(undefined, "all", log, false))
     .catch((error) => log(`ERREUR ${error instanceof Error ? error.message : String(error)}`))
     .finally(() => {
       running = false;

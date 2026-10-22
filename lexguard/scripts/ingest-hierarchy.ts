@@ -26,7 +26,11 @@ interface Row {
   url: string;
 }
 
-async function upsert(rows: Row[]) {
+async function upsert(all: Row[]) {
+  // Les protocoles de la CEDH renumérotent leurs articles : on garde la première occurrence
+  // (le texte de la Convention elle-même), une ligne par identifiant.
+  const seen = new Set<string>();
+  const rows = all.filter((r) => !seen.has(r.id) && seen.add(r.id));
   const client = await db();
   for (let i = 0; i < rows.length; i += 200) {
     const chunk = rows.slice(i, i + 200);
@@ -132,9 +136,11 @@ async function jurisprudence(log: (m: string) => void) {
   log(`Jurisprudence : ${total} décisions du Conseil d'État`);
 }
 
-export async function ingestHierarchy(log: (m: string) => void = console.log, closeAtEnd = true) {
-  log(`Niveau 1 et 2 : ${NEW_IDS.length} textes (bloc de constitutionnalité + codes supplémentaires)`);
-  await ingestLegi(undefined, "all", log, false, NEW_IDS, "_v2");
+export async function ingestHierarchy(log: (m: string) => void = console.log, closeAtEnd = true, skipLegi = false) {
+  if (!skipLegi) {
+    log(`Niveau 1 et 2 : ${NEW_IDS.length} textes (bloc de constitutionnalité + codes supplémentaires)`);
+    await ingestLegi(undefined, "all", log, false, NEW_IDS, "_v2");
+  }
   await international(log);
   await jurisprudence(log);
   const client = await db();
