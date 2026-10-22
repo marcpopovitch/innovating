@@ -22,7 +22,14 @@ function* walk(dir: string): Generator<string> {
 function extract(archive: string, out: string) {
   mkdirSync(out, { recursive: true });
   const patterns = Object.keys(CODES).flatMap((id) => ["--include", `*code_en_vigueur*/${id}/article/*`]);
-  execFileSync("tar", ["-xzf", archive, "-C", out, ...patterns], { stdio: "inherit", maxBuffer: 1 << 26 });
+  try {
+    execFileSync("tar", ["-xzf", archive, "-C", out, ...patterns], { stdio: "pipe", maxBuffer: 1 << 26 });
+  } catch (error) {
+    // Un incrément ne touche souvent qu'une partie des codes : tar sort en erreur pour les
+    // motifs absents. Seule une autre erreur (archive corrompue…) doit arrêter l'import.
+    const stderr = String((error as { stderr?: Buffer }).stderr ?? "");
+    if (stderr.split("\n").some((l) => l.trim() && !/Not found in archive|Error exit delayed/.test(l))) throw error;
+  }
 }
 
 async function insertBatch(batch: ParsedArticle[]) {
