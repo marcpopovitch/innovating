@@ -76,11 +76,10 @@ async function load(dir: string, log: (m: string) => void) {
   return n + batch.length;
 }
 
-async function main() {
-  const log = console.log;
-  const dump = process.argv[2] ?? join(DIR, "legi_global.tar.gz");
+export async function ingestLegi(dumpArg?: string, incrementsArg?: string, log: (m: string) => void = console.log, closeAtEnd = true) {
+  const dump = dumpArg ?? join(DIR, "legi_global.tar.gz");
   // « all » rejoue tous les incréments parus depuis le dump (le dump DILA date de juillet 2025).
-  const increments = process.argv[3] ?? "all";
+  const increments = incrementsArg ?? "all";
   const out = join(DIR, "legi_codes");
   if (!existsSync(join(out, ".done"))) {
     log(`Extraction des ${Object.keys(CODES).length} codes depuis ${dump}…`);
@@ -135,11 +134,11 @@ async function main() {
   }
   const client = await db();
   const { rows } = await client.query("select code_title, count(*) filter (where etat = 'VIGUEUR')::int en_vigueur, count(*)::int total from articles group by 1 order by 2 desc");
-  console.table(rows);
-  await client.close();
+  log(JSON.stringify(rows));
+  if (closeAtEnd) await client.close();
 }
 
-main().catch((error) => {
+if (process.argv[1]?.endsWith("ingest-legi.ts")) ingestLegi(process.argv[2], process.argv[3]).catch((error) => {
   console.error(error);
   process.exit(1);
 });
