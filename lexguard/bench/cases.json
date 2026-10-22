@@ -1,0 +1,74 @@
+[
+  {
+    "id": "pesticides",
+    "title": "Arrêté interdisant les pesticides sur la commune",
+    "collectivite": "Commune test (inspiré de Langouët 2019, Arcueil 2020)",
+    "date_acte": "2026-09-15",
+    "expected": "incompetence",
+    "why": "La police spéciale des produits phytopharmaceutiques appartient à l'État (Code rural L253-7) ; le maire ne peut s'y substituer (CE, 31 déc. 2020, Commune d'Arcueil).",
+    "input": "Le Maire de la commune,\nVu le code général des collectivités territoriales, notamment ses articles L. 2212-1 et L. 2212-2,\nConsidérant les risques pour la santé publique liés à l'exposition aux produits phytopharmaceutiques,\nARRÊTE :\nArticle 1er : L'utilisation de produits phytopharmaceutiques est interdite sur l'ensemble du territoire communal, y compris sur les parcelles agricoles, à une distance inférieure à 150 mètres de toute habitation.\nArticle 2 : Les infractions au présent arrêté seront constatées par procès-verbal.\nArticle 3 : Le Directeur général des services est chargé de l'exécution du présent arrêté."
+  },
+  {
+    "id": "poids-lourds-hors-agglo",
+    "title": "Arrêté interdisant les poids lourds sur une route départementale hors agglomération",
+    "collectivite": "Commune test",
+    "date_acte": "2026-09-01",
+    "expected": "incompetence",
+    "why": "Hors agglomération, la police de la circulation sur route départementale relève du président du conseil départemental (CGCT L3221-4), pas du maire (CGCT L2213-1 ne vaut qu'à l'intérieur des agglomérations).",
+    "input": "Le Maire,\nVu le code général des collectivités territoriales, notamment l'article L. 2213-1,\nVu le code de la route,\nARRÊTE :\nArticle 1 : La circulation des véhicules de plus de 3,5 tonnes est interdite sur la route départementale 12, entre le lieu-dit Les Granges et la limite communale, en dehors de l'agglomération.\nArticle 2 : Une signalisation conforme sera mise en place par les services municipaux."
+  },
+  {
+    "id": "chasse",
+    "title": "Arrêté municipal fixant la date de fermeture de la chasse",
+    "collectivite": "Commune test",
+    "date_acte": "2026-09-10",
+    "expected": "incompetence",
+    "why": "Les dates d'ouverture et de fermeture de la chasse sont fixées par l'autorité administrative de l'État (préfet), Code de l'environnement L424-2 et suivants.",
+    "input": "Le Maire,\nVu le code général des collectivités territoriales,\nARRÊTE :\nArticle 1 : La chasse est fermée sur le territoire de la commune à compter du 15 décembre 2026.\nArticle 2 : Toute action de chasse après cette date est interdite sur la commune."
+  },
+  {
+    "id": "tabac-ecoles",
+    "title": "Arrêté interdisant de fumer dans les écoles",
+    "collectivite": "Commune test",
+    "date_acte": "2026-09-01",
+    "expected": "doublon",
+    "why": "L'interdiction de fumer dans les lieux affectés à un usage collectif et les établissements scolaires est déjà posée par le Code de la santé publique (L3512-8) : l'arrêté la répète sans rien ajouter.",
+    "input": "Le Maire,\nVu le code de la santé publique,\nARRÊTE :\nArticle 1 : Il est interdit de fumer dans l'enceinte des écoles maternelles et élémentaires de la commune, y compris dans les cours de récréation.\nArticle 2 : Le présent arrêté sera affiché à l'entrée de chaque école."
+  },
+  {
+    "id": "couvre-feu-general",
+    "title": "Couvre-feu permanent des mineurs sur toute la commune",
+    "collectivite": "Commune test",
+    "date_acte": "2026-07-01",
+    "expected": "conflit",
+    "why": "Une mesure de police doit être nécessaire et proportionnée à un risque circonscrit (CGCT L2212-2) ; une interdiction générale et permanente est illégale (jurisprudence constante, CE 2001).",
+    "input": "Le Maire,\nVu le code général des collectivités territoriales, notamment ses articles L. 2212-1 et L. 2212-2,\nARRÊTE :\nArticle 1 : Il est interdit, toute l'année et sur l'ensemble du territoire communal, aux mineurs de moins de 16 ans non accompagnés d'un adulte de circuler sur la voie publique entre 21 heures et 6 heures.\nArticle 2 : Les mineurs en infraction seront reconduits à leur domicile."
+  },
+  {
+    "id": "zone-30",
+    "title": "Limitation de vitesse à 30 km/h en centre-ville",
+    "collectivite": "Commune test",
+    "date_acte": "2026-09-01",
+    "expected": "conforme",
+    "why": "Le maire peut fixer en agglomération une vitesse inférieure à 50 km/h (Code de la route R411-4, CGCT L2213-1).",
+    "input": "Le Maire,\nVu le code général des collectivités territoriales, notamment l'article L. 2213-1,\nVu le code de la route, notamment l'article R. 411-4,\nConsidérant la fréquentation piétonne du centre-ville,\nARRÊTE :\nArticle 1 : La vitesse maximale autorisée est fixée à 30 km/h sur les rues de la Mairie, de l'Église et du Marché, situées en agglomération.\nArticle 2 : La signalisation réglementaire sera mise en place par les services techniques."
+  },
+  {
+    "id": "alcool-ciblee",
+    "title": "Interdiction ciblée de consommer de l'alcool sur la voie publique",
+    "collectivite": "Commune test",
+    "date_acte": "2026-06-01",
+    "expected": "conforme",
+    "why": "Mesure de police générale (CGCT L2212-2) limitée dans l'espace et le temps, justifiée par des troubles constatés : légale.",
+    "input": "Le Maire,\nVu le code général des collectivités territoriales, notamment ses articles L. 2212-1 et L. 2212-2,\nConsidérant les troubles à l'ordre public constatés par la police municipale au cours de l'été 2025 aux abords du square Jean-Moulin,\nARRÊTE :\nArticle 1 : La consommation de boissons alcooliques sur la voie publique est interdite dans le périmètre du square Jean-Moulin, du 1er juin au 30 septembre 2026, de 20 heures à 6 heures.\nArticle 2 : Cette interdiction ne s'applique pas aux terrasses autorisées des débits de boissons."
+  },
+  {
+    "id": "bruit-chantiers",
+    "title": "Horaires des chantiers bruyants",
+    "collectivite": "Commune test",
+    "date_acte": "2026-05-01",
+    "expected": "conforme",
+    "why": "Le maire peut réglementer les bruits de voisinage au titre de sa police générale (CGCT L2212-2) ; mesure limitée et proportionnée.",
+    "input": "Le Maire,\nVu le code général des collectivités territoriales, notamment l'article L. 2212-2,\nVu le code de la santé publique,\nARRÊTE :\nArticle 1 : Les travaux de chantier bruyants réalisés sur la voie publique ou à proximité d'habitations sont interdits les dimanches et jours fériés, ainsi que de 20 heures à 7 heures les autres jours, sauf intervention urgente.\nArticle 2 : Des dérogations peuvent être accordées par le maire sur demande motivée."
+  }
+]
