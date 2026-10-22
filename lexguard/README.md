@@ -51,7 +51,7 @@ npm run data-layer > bench/data-layer.txt                   # livrable « data l
 npm run sql -- "select count(*) from articles"
 ```
 
-Variables d'environnement (à mettre dans `.env`) : `OPENROUTER_API_KEY` (une clé pour tous les modèles : Claude, GPT, Mistral, Gemini) ou à défaut `ANTHROPIC_API_KEY` (Claude seulement) ; `DATABASE_URL` (Aiven PostgreSQL ; sans elle, base PGlite locale dans `.data/pglite`).
+Variables d'environnement (à mettre dans `.env`) : `OPENAI_API_KEY` (modèles GPT, en direct), `OPENROUTER_API_KEY` (Claude, Mistral, Gemini — et GPT si pas de clé OpenAI) ou à défaut `ANTHROPIC_API_KEY` (Claude seulement) ; `DATABASE_URL` (Aiven PostgreSQL ; sans elle, base PGlite locale dans `.data/pglite`).
 
 PGlite n'accepte qu'un processus à la fois : arrêter `npm run dev` avant de lancer un script d'ingestion en local.
 
