@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { LangProvider } from "@/components/lang-provider";
@@ -12,12 +13,24 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: t("meta.title"), description: t("meta.description") };
 }
 
-export default async function RootLayout({ children }: LayoutProps<"/">) {
+// La langue vient d'un cookie (donnée dynamique) : on la lit sous Suspense, pour que la coque reste préparée à l'avance.
+async function Localized({ children }: { children: React.ReactNode }) {
   const lang = await getLang();
   return (
-    <html lang={lang} className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    <LangProvider lang={lang}>
+      <script dangerouslySetInnerHTML={{ __html: `document.documentElement.lang=${JSON.stringify(lang)}` }} />
+      {children}
+    </LangProvider>
+  );
+}
+
+export default function RootLayout({ children }: LayoutProps<"/">) {
+  return (
+    <html lang="fr" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
-        <LangProvider lang={lang}>{children}</LangProvider>
+        <Suspense>
+          <Localized>{children}</Localized>
+        </Suspense>
       </body>
     </html>
   );
