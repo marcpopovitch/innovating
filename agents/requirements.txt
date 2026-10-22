@@ -4,3 +4,4 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 pydantic>=2.7
 python-dotenv>=1.0
+keenable>=0.1               # recherche web + fetch du vrai texte (couche corpus : Légifrance / EUR-Lex)

@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { AGENT_STYLE, SEVERITY_LABEL, VERDICT_STYLE } from "@/components/agent-style";
 import { Arrow } from "@/components/ui/arrow";
 import type { AgentEvent, Analysis, Finding, Verdict } from "@/lib/types";
+import type { ModalCheckResult, ModalFinding } from "@/lib/agents/modal-client";
 
 const EXAMPLE = {
   title: "Arrêté n° 2026-045 — produits phytopharmaceutiques et tranquillité publique",
@@ -42,7 +43,7 @@ Fait à Saint-Exemple, le 22 octobre 2026.
 Le Maire`,
 };
 
-type Phase = "saisie" | "analyse" | "termine";
+type Phase = "saisie" | "analyse" | "termine" | "modal";
 
 export default function AnalysePage() {
   return (
@@ -65,6 +66,8 @@ function AnalyseView() {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
+  const [modalResult, setModalResult] = useState<ModalCheckResult | null>(null);
+  const [modalBusy, setModalBusy] = useState(false);
   const sourceRef = useRef<EventSource | null>(null);
 
   const loadResult = useCallback(async (id: string) => {
@@ -150,6 +153,34 @@ function AnalyseView() {
     }
   }
 
+  async function submitModal() {
+    setError(null);
+    if (input.trim().length < 40) {
+      setError("Collez le texte complet de l'acte (au moins quelques lignes).");
+      return;
+    }
+    setModalResult(null);
+    setModalBusy(true);
+    setPhase("modal");
+    try {
+      const res = await fetch("/api/analyses/modal", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ input }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error || `Réponse ${res.status}`);
+      }
+      setModalResult((await res.json()) as ModalCheckResult);
+    } catch (err) {
+      setPhase("saisie");
+      setError(`L'analyse via Modal a échoué : ${err instanceof Error ? err.message : "erreur réseau"}.`);
+    } finally {
+      setModalBusy(false);
+    }
+  }
+
   function reset() {
     sourceRef.current?.close();
     setPhase("saisie");
@@ -157,6 +188,8 @@ function AnalyseView() {
     setFindings([]);
     setAnalysis(null);
     setAnalysisId(null);
+    setModalResult(null);
+    setModalBusy(false);
     window.history.replaceState(null, "", "/app/analyse");
   }
 
@@ -206,6 +239,9 @@ function AnalyseView() {
               Lancer les agents
               <Arrow size={14} />
             </button>
+            <button type="button" onClick={submitModal} className="fl-btn fl-btn--ghost w-full">
+              Analyser via Modal ⚡
+            </button>
             <button
               type="button"
               className="fl-btn fl-btn--ghost w-full"
@@ -223,6 +259,8 @@ function AnalyseView() {
             </p>
           </div>
         </form>
+      ) : phase === "modal" ? (
+        <ModalResults result={modalResult} busy={modalBusy} />
       ) : (
         <div className="mt-10 grid gap-6 lg:grid-cols-[380px_1fr]">
           <Timeline events={events} running={phase === "analyse"} />
@@ -476,5 +514,78 @@ function FindingCard({ finding, compact = false }: { finding: Finding; compact?:
         </div>
       )}
     </motion.article>
+  );
+}
+
+// Rendu du résultat du moteur Python exécuté sur Modal (schéma agents/orchestrator.py).
+const MODAL_VERDICT: Record<ModalFinding["type"], { label: string; className: string }> = {
+  conflit: { label: "Conflit", className: "bg-red/10 text-red-deep" },
+  doublon: { label: "Doublon", className: "bg-card text-body" },
+  vide: { label: "Vide juridique", className: "bg-card text-muted" },
+  compatible: { label: "Compatible", className: "bg-ok/10 text-ok" },
+};
+const MODAL_ORDER: ModalFinding["type"][] = ["conflit", "doublon", "vide", "compatible"];
+
+function ModalResults({ result, busy }: { result: ModalCheckResult | null; busy: boolean }) {
+  if (busy && !result) {
+    return (
+      <section className="mt-10 flex min-h-[320px] flex-col items-center justify-center rounded-[16px] bg-warm px-6 text-center">
+        <span className="size-3 rounded-full bg-red fl-pulse" />
+        <p className="mt-5 text-[17px]">Analyse exécutée sur Modal ⚡ (agents Python + Keenable)…</p>
+        <p className="mt-2 max-w-[46ch] text-[14px] text-body">Chaque citation est un article réel récupéré sur Légifrance / EUR-Lex, puis vérifié mot pour mot.</p>
+      </section>
+    );
+  }
+  if (!result) return null;
+  const sorted = [...result.findings].sort((a, b) => MODAL_ORDER.indexOf(a.type) - MODAL_ORDER.indexOf(b.type));
+
+  return (
+    <section className="mt-10 flex flex-col gap-5">
+      <div className="fl-card p-6">
+        <div className="flex items-center justify-between gap-3">
+          <p className="fl-eyebrow">Synthèse · exécutée sur Modal ⚡</p>
+          {result.rejected_citations > 0 && <span className="fl-badge bg-card text-body">{result.rejected_citations} citation(s) écartée(s)</span>}
+        </div>
+        <p className="mt-3 text-[18px] leading-snug tracking-[-0.015em]">{result.summary}</p>
+      </div>
+
+      {sorted.length === 0 && <div className="rounded-[16px] bg-warm p-6 text-[15px] text-body">Aucune obligation vérifiable n&apos;a été détectée.</div>}
+
+      {sorted.map((finding, i) => {
+        const verdict = MODAL_VERDICT[finding.type];
+        return (
+          <motion.article key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="fl-card p-6">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`fl-badge ${verdict.className}`}>{verdict.label}</span>
+              <span className="fl-badge bg-card text-body">confiance {Math.round(finding.confidence * 100)} %</span>
+            </div>
+            <h3 className="mt-4 text-[21px] leading-snug tracking-[-0.02em]">{finding.obligation}</h3>
+            <p className="mt-4 text-[15px] leading-relaxed text-body">{finding.explanation}</p>
+            {finding.citations.length > 0 && (
+              <div className="mt-5 flex flex-col gap-2.5">
+                {finding.citations.map((citation, j) => (
+                  <a
+                    key={j}
+                    href={citation.url ?? "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group block rounded-[10px] border border-line bg-warm px-4 py-3 transition-colors hover:border-line-2 hover:bg-white"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[13px] font-medium">
+                        {citation.ref}
+                        {citation.version_date ? <span className="text-muted"> · {citation.version_date}</span> : null}
+                      </span>
+                      <span className="fl-mono shrink-0 text-[11px] text-muted group-hover:text-red">source ↗</span>
+                    </div>
+                    {citation.excerpt && <p className="mt-1.5 text-[13px] leading-relaxed text-body">« {citation.excerpt} »</p>}
+                  </a>
+                ))}
+              </div>
+            )}
+          </motion.article>
+        );
+      })}
+    </section>
   );
 }

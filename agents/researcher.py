@@ -10,9 +10,9 @@ MAX_TOOL_CALLS = 4
 
 TOOL = {
     "name": "search_articles",
-    "description": "Recherche par mots-clés dans les textes juridiques en vigueur (constitution, droit "
-                   "international et de l'UE, lois, décrets, arrêtés) et la jurisprudence. "
-                   "Renvoie une liste d'articles : id, ref, level, version_date, text.",
+    "description": "Recherche dans les textes juridiques RÉELS en vigueur, récupérés en direct sur le web "
+                   "(Légifrance pour le droit français, EUR-Lex pour le droit de l'UE). "
+                   "Renvoie une liste d'articles réels : id, ref, level, version_date, text.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -62,7 +62,7 @@ async def research(obligation: Obligation) -> tuple[list[dict], list[dict]]:
                     content = f"Limite de {MAX_TOOL_CALLS} recherches atteinte : donne ta réponse finale."
                 else:
                     calls += 1
-                    articles = search_articles(block.input.get("query", ""), block.input.get("filters"))
+                    articles = await search_articles(block.input.get("query", ""), block.input.get("filters"))
                     found.update({a["id"]: a for a in articles})
                     content = (json.dumps([_compact(a) for a in articles], ensure_ascii=False) if articles
                                else "Aucun résultat : reformule avec d'autres termes ou des synonymes.")
