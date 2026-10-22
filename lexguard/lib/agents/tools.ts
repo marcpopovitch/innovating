@@ -97,7 +97,13 @@ export function makeResearchTools(actor: string, state: ResearchState, niveauxPa
         niveau: z.enum(["constitutionnel", "international", "code"]).optional().describe("Restreindre à un niveau de la pyramide des normes"),
       }),
       run: async ({ query, code, since, niveau }) => {
-        const hits = await searchCorpus(actor, query, code, 8, since, niveau ? [niveau] : niveauxParDefaut);
+        // Un numéro d'article (« L253-7 », « R. 2212-1 ») n'est pas un mot : on le cherche aussi par numéro.
+        const nums = [...query.matchAll(/\b([LRDA])\.?\s?(\d{1,4}(?:-\d+)+)\b/g)].map((m) => `${m[1]}${m[2]}`);
+        const exact = (await Promise.all(nums.slice(0, 3).map((n) => findByNum(actor, n, code)))).flat();
+        const hits = [
+          ...exact.map((a) => ({ ...a, snippet: a.text.slice(0, 400) })),
+          ...(await searchCorpus(actor, query, code, 8, since, niveau ? [niveau] : niveauxParDefaut)).filter((h) => !exact.some((a) => a.id === h.id)),
+        ];
         hits.forEach((h) => state.consulted.add(h.id));
         return fmtHits(hits);
       },
