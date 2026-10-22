@@ -2,6 +2,7 @@ import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { ingestHierarchy } from "@/scripts/ingest-hierarchy";
 import { ingestLegi } from "@/scripts/ingest-legi";
+import { ingestJo } from "@/scripts/ingest-jo";
 
 // Applique les incréments LEGI depuis le serveur déjà lancé (la base PGlite locale
 // n'accepte qu'un processus). Réservé au poste de développement.
@@ -16,7 +17,9 @@ export async function POST(request: Request) {
   const log = (m: string) => appendFileSync(logFile, `${m}\n`);
   // ?job=hierarchie : Constitution, codes supplémentaires, CEDH/UE, Conseil d'État.
   const job = new URL(request.url).searchParams.get("job");
-  void (job === "hierarchie" ? ingestHierarchy(log, false) : job === "hierarchie-suite" ? ingestHierarchy(log, false, true) : ingestLegi(undefined, "all", log, false))
+  // ?job=jo&since=AAAAMMJJ : historique du Journal officiel, fichiers supprimés après lecture.
+  const since = new URL(request.url).searchParams.get("since") ?? undefined;
+  void (job === "jo" ? ingestJo(3, log, { since, cleanup: true }) : job === "hierarchie" ? ingestHierarchy(log, false) : job === "hierarchie-suite" ? ingestHierarchy(log, false, true) : ingestLegi(undefined, "all", log, false))
     .catch((error) => log(`ERREUR ${error instanceof Error ? error.message : String(error)}`))
     .finally(() => {
       running = false;

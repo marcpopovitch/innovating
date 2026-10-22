@@ -134,5 +134,40 @@ export function parseTexteVersion(xml: string): ParsedTexte | null {
   };
 }
 
-export const legifranceArticleUrl = (id: string) => `https://www.legifrance.gouv.fr/codes/article_lc/${id}`;
+/** Ligne du corpus pour les textes hors LEGI (international, jurisprudence). */
+export interface CorpusRow {
+  id: string;
+  code_id: string;
+  code_title: string;
+  num: string;
+  section: string | null;
+  text: string;
+  date_debut: string | null;
+  niveau: "international" | "jurisprudence";
+  url: string;
+}
+
+const tag = (xml: string, name: string) => xml.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1]?.trim() ?? null;
+
+/** Décision du Conseil d'État au format open data (opendata.justice-administrative.fr, fichiers DCE_*.xml). */
+export function parseDecisionCE(xml: string): CorpusRow | null {
+  const ecli = tag(xml, "Numero_ECLI");
+  const numero = tag(xml, "Numero_Dossier");
+  const date = tag(xml, "Date_Lecture");
+  const text = htmlToText(tag(xml, "Texte_Integral"));
+  if (!ecli || !numero || !date || text.length < 200) return null;
+  return {
+    id: ecli,
+    code_id: "CE",
+    code_title: "Conseil d'État",
+    num: `n° ${numero} du ${date}`,
+    section: [tag(xml, "Type_Decision"), tag(xml, "Solution"), tag(xml, "Formation_Jugement"), `publication ${tag(xml, "Code_Publication") ?? "?"}`].filter(Boolean).join(" · "),
+    text: text.slice(0, 30_000),
+    date_debut: date,
+    niveau: "jurisprudence",
+    url: `https://www.conseil-etat.fr/fr/arianeweb/CE/decision/${date}/${numero}`,
+  };
+}
+
+export const legifranceArticleUrl =(id: string) => `https://www.legifrance.gouv.fr/codes/article_lc/${id}`;
 export const legifranceJorfUrl = (id: string) => `https://www.legifrance.gouv.fr/jorf/id/${id}`;

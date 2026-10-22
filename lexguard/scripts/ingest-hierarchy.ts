@@ -8,25 +8,15 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from "node:path";
 import { CODES, CONSTITUTION } from "../lib/codes";
 import { db } from "../lib/db";
-import { htmlToText } from "../lib/dila";
+import { type CorpusRow, htmlToText, parseDecisionCE } from "../lib/dila";
 import { ingestLegi } from "./ingest-legi";
 
 const DATA = join(process.cwd(), ".data");
 const NEW_IDS = [...Object.keys(CONSTITUTION), ...Object.keys(CODES).slice(9)];
 
-interface Row {
-  id: string;
-  code_id: string;
-  code_title: string;
-  num: string;
-  section: string | null;
-  text: string;
-  date_debut: string | null;
-  niveau: "international" | "jurisprudence";
-  url: string;
-}
+type Row = CorpusRow;
 
-async function upsert(all: Row[]) {
+export async function upsert(all: Row[]) {
   // Les protocoles de la CEDH renumérotent leurs articles : on garde la première occurrence
   // (le texte de la Convention elle-même), une ligne par identifiant.
   const seen = new Set<string>();
@@ -95,8 +85,6 @@ async function international(log: (m: string) => void) {
   log(`International / UE : ${rows.length} articles (CEDH, Charte UE, directive Services)`);
 }
 
-const tag = (xml: string, name: string) => xml.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1]?.trim() ?? null;
-
 async function jurisprudence(log: (m: string) => void) {
   const dir = join(DATA, "ja");
   mkdirSync(dir, { recursive: true });
@@ -112,23 +100,8 @@ async function jurisprudence(log: (m: string) => void) {
     if (!existsSync(out)) execFileSync("unzip", ["-o", "-q", join(dir, zip), "-d", out]);
     const rows: Row[] = [];
     for (const file of readdirSync(out, { recursive: true }).map(String).filter((f) => f.endsWith(".xml"))) {
-      const xml = readFileSync(join(out, file), "utf8");
-      const ecli = tag(xml, "Numero_ECLI");
-      const numero = tag(xml, "Numero_Dossier");
-      const date = tag(xml, "Date_Lecture");
-      const text = htmlToText(tag(xml, "Texte_Integral"));
-      if (!ecli || !numero || !date || text.length < 200) continue;
-      rows.push({
-        id: ecli,
-        code_id: "CE",
-        code_title: "Conseil d'État",
-        num: `n° ${numero} du ${date}`,
-        section: [tag(xml, "Type_Decision"), tag(xml, "Solution"), tag(xml, "Formation_Jugement"), `publication ${tag(xml, "Code_Publication") ?? "?"}`].filter(Boolean).join(" · "),
-        text: text.slice(0, 30_000),
-        date_debut: date,
-        niveau: "jurisprudence",
-        url: `https://www.conseil-etat.fr/fr/arianeweb/CE/decision/${date}/${numero}`,
-      });
+      const row = parseDecisionCE(readFileSync(join(out, file), "utf8"));
+      if (row) rows.push(row);
     }
     await upsert(rows);
     total += rows.length;
