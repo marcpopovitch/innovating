@@ -142,7 +142,7 @@ async function run(analysisId: string): Promise<void> {
     const consulted = new Set<string>();
     if (a.mode === "exploration") {
       const out = await runExploration(analysisId, meter, a.input, cadrage, consulted);
-      const counts = { conflit: 0, doublon: 0, vide: 0, incompetence: 0, conforme: 0, existant: 0 } as Record<Verdict, number>;
+      const counts = { conflit: 0, doublon: 0, vide: 0, incompetence: 0, forme: 0, conforme: 0, existant: 0 } as Record<Verdict, number>;
       const found = await client.query<{ verdict: Verdict; n: number }>("select verdict, count(*)::int n from findings where analysis_id = $1 and verified group by 1", [analysisId]);
       for (const r of found.rows) counts[r.verdict] = r.n;
       await finish(out.headline, { headline: out.headline, counts, rejected: out.rejected, articles_consulted: consulted.size });
@@ -152,6 +152,13 @@ async function run(analysisId: string): Promise<void> {
     await emit(analysisId, "analyste", "etape", "Découpage de l'acte en dispositions normatives");
     const { autorite, dispositions } = await analyst(meter, a.input);
     await emit(analysisId, "analyste", "resultat", `${dispositions.length} dispositions identifiées (autorité : ${autorite})`, { dispositions });
+    // Rien à contrôler (notes, tableau, courrier…) : le dire, plutôt que « aucune irrégularité ».
+    if (!dispositions.length) {
+      const headline = `« ${a.title} » ne contient aucune règle à contrôler : ce n'est pas un arrêté, une délibération ou un décret. Déposez l'acte lui-même.`;
+      const counts = { conflit: 0, doublon: 0, vide: 0, incompetence: 0, forme: 0, conforme: 0, existant: 0 } as Record<Verdict, number>;
+      await finish(headline, { headline, counts, rejected: 0, articles_consulted: 0 });
+      return;
+    }
 
     const ctx = { autorite, collectivite: a.collectivite, date: a.date_acte, cadrage };
     await emit(analysisId, "orchestrateur", "etape", `${dispositions.length} chercheurs (codes) + ${LEVELS.length} experts (Constitution, UE, jurisprudence) lancés en parallèle`);
@@ -172,10 +179,15 @@ async function run(analysisId: string): Promise<void> {
     const settled = await Promise.allSettled(dispositions.map((d) => analyseDisposition(analysisId, meter, d, ctx, consulted, levels)));
     const findings = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
     for (const s of settled) if (s.status === "rejected") await emit(analysisId, "orchestrateur", "erreur", String(s.reason instanceof Error ? s.reason.message : s.reason));
+    // Aucun chercheur n'a abouti : conclure « aucune irrégularité » serait faux, l'analyse échoue.
+    const failed = settled.find((s) => s.status === "rejected");
+    if (dispositions.length && !findings.length && failed) {
+      throw new Error(`Aucune disposition n'a pu être vérifiée (${failed.reason instanceof Error ? failed.reason.message : String(failed.reason)}). Relancez l'analyse.`);
+    }
 
     await emit(analysisId, "redacteur", "etape", "Rédaction de la synthèse");
     const { headline } = await writer(meter, a.title, findings);
-    const counts = { conflit: 0, doublon: 0, vide: 0, incompetence: 0, conforme: 0, existant: 0 } as Record<Verdict, number>;
+    const counts = { conflit: 0, doublon: 0, vide: 0, incompetence: 0, forme: 0, conforme: 0, existant: 0 } as Record<Verdict, number>;
     for (const f of findings) if (f.verified) counts[f.verdict] += 1;
     // Mémoire : l'acte analysé rejoint le corpus local de la collectivité (détection de doublons futurs).
     if (a.collectivite) {

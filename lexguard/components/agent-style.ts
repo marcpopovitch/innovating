@@ -14,6 +14,7 @@ export const AGENT_STYLE: Record<AgentName, { label: string; dot: string }> = {
 export const VERDICT_STYLE: Record<Verdict, { label: string; className: string }> = {
   conflit: { label: "Conflit", className: "bg-red/10 text-red-deep" },
   incompetence: { label: "Incompétence", className: "bg-red/10 text-red-deep" },
+  forme: { label: "Vice de forme", className: "bg-red/10 text-red-deep" },
   doublon: { label: "Doublon", className: "bg-orange/10 text-orange" },
   vide: { label: "Vide juridique", className: "bg-orange/10 text-orange" },
   conforme: { label: "Conforme", className: "bg-ok/10 text-ok" },

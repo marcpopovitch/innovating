@@ -91,7 +91,7 @@ create table if not exists findings (
   id                uuid primary key,
   analysis_id       uuid not null,
   disposition       jsonb not null,
-  verdict           text not null,          -- conflit | doublon | vide | incompetence | conforme
+  verdict           text not null,          -- conflit | doublon | vide | incompetence | forme | conforme | existant
   severity          text not null,          -- critique | majeure | mineure | info
   title             text not null,
   explanation       text not null,

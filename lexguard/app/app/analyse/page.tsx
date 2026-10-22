@@ -436,7 +436,7 @@ function Disclosure({ title, className = "", children }: { title: React.ReactNod
   );
 }
 
-const ORDER: Verdict[] = ["conflit", "incompetence", "vide", "doublon", "existant", "conforme"];
+const ORDER: Verdict[] = ["conflit", "incompetence", "forme", "vide", "doublon", "existant", "conforme"];
 
 function Results({ analysis, findings }: { analysis: Analysis | null; findings: Finding[] }) {
   if (!analysis) return null;

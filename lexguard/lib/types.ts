@@ -1,6 +1,6 @@
 // Contrat partagé entre les agents, l'API et l'interface.
 
-export type Verdict = "conflit" | "doublon" | "vide" | "incompetence" | "conforme" | "existant";
+export type Verdict = "conflit" | "doublon" | "vide" | "incompetence" | "forme" | "conforme" | "existant";
 
 /**
  * Deux usages distincts :

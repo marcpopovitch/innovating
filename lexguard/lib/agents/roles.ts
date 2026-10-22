@@ -40,6 +40,54 @@ export async function analyst(meter: CostMeter, acte: string): Promise<{ autorit
   return { autorite: out.autorite, dispositions: out.dispositions.slice(0, 6).map((d, i) => ({ ...d, id: `d${i + 1}` })) };
 }
 
+// ---------- 1 bis. Contrôle de forme ----------
+
+// Règles de forme d'un acte administratif local, lues dans le corpus (jamais de mémoire).
+const FORME_RULES: Array<[string, string]> = [
+  ["L212-1", "Code des relations entre le public et l'administration"], // signature, prénom, nom, qualité
+  ["L211-2", "Code des relations entre le public et l'administration"], // motivation (décisions individuelles défavorables)
+  ["L221-2", "Code des relations entre le public et l'administration"], // publicité des actes réglementaires
+  ["L2131-1", "Code général des collectivités territoriales"], // caractère exécutoire, transmission au préfet
+  ["L2122-18", "Code général des collectivités territoriales"], // délégation de signature aux adjoints
+  ["R421-5", "Code de justice administrative"], // mention des voies et délais de recours
+];
+
+const ELEMENTS = ["autorite", "date", "dispositif", "signature", "identite_signataire", "visas", "motivation", "voies_recours"] as const;
+
+const FormeSchema = z.object({
+  nature: z.enum(["arrete", "deliberation", "decret", "autre"]).describe("« autre » si le document n'est pas un acte administratif"),
+  description: z.string().describe("Ce qu'est réellement le document, en une phrase précise (ex. « arrêté municipal du maire de X », « tableau récapitulatif de résultats attendus »)"),
+  elements: z.array(z.object({ element: z.enum(ELEMENTS), present: z.boolean(), extrait: z.string().describe("Passage du document qui le montre ; vide si absent") })),
+  manquements: z.array(
+    z.object({
+      title: z.string().describe("Le défaut, en une phrase courte"),
+      explanation: z.string().describe("Pourquoi c'est un défaut de forme et ses conséquences (illégalité, inopposabilité, non exécutoire…)"),
+      severity: z.enum(["critique", "majeure", "mineure", "info"]),
+      article_id: z.string().describe("Identifiant de l'article fourni qui pose la règle"),
+      quote: z.string().describe("Passage repris MOT POUR MOT de cet article"),
+      suggestion: z.string().describe("Ce qu'il faut ajouter ou corriger"),
+    }),
+  ),
+});
+export type FormeOutput = z.infer<typeof FormeSchema> & { articles: FullArticle[] };
+
+/** Nature du document et respect des règles de forme (signature, mentions, publicité, recours…). */
+export async function formalist(meter: CostMeter, acte: string, findByNum: (num: string, code: string) => Promise<FullArticle[]>): Promise<FormeOutput> {
+  const articles = (await Promise.all(FORME_RULES.map(([num, code]) => findByNum(num, code).then((r) => r[0])))).filter((a): a is FullArticle => !!a);
+  const out = await parse(
+    meter,
+    MODELS.fast,
+    "medium",
+    `Tu es juriste en contrôle de légalité. Tu examines la FORME d'un document déposé par un agent de préfecture ou de collectivité.
+1. Dis précisément ce qu'est le document. Un acte administratif (arrêté, délibération, décret) émane d'une autorité identifiée, est daté, et contient un dispositif normatif (« ARRÊTE », « DÉCIDE », « DÉCRÈTE », « DÉLIBÈRE » suivi d'articles). S'il manque cela, la nature est « autre » : décris ce que c'est vraiment.
+2. Pour chaque élément (autorité, date, dispositif, signature, identité du signataire, visas, motivation, voies de recours), dis s'il est présent, avec l'extrait qui le prouve.
+3. Liste les manquements aux règles de forme, uniquement ceux que démontrent les articles fournis, en citant MOT POUR MOT l'article. Pour un document « autre », liste ce qui lui manque pour être un acte valable. N'invente aucune règle ; n'examine pas le fond (compétence matérielle, proportionnalité) : d'autres agents s'en chargent. ${SOURCES_RULE}`,
+    `Document déposé :\n${acte.slice(0, 30_000)}\n\nRègles de forme (corpus) :\n${articles.map((a) => `<article id="${a.id}" source="${a.code_title}" num="${a.num}">\n${a.text.slice(0, 4000)}\n</article>`).join("\n")}`,
+    FormeSchema,
+  );
+  return { ...out, articles };
+}
+
 // ---------- 2. Chercheur (agent multi-étapes avec outils) ----------
 
 export interface ResearchOptions {
