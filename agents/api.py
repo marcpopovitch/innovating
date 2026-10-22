@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from agents.orchestrator import check
 
-app = FastAPI(title="LexGuard Gov — agents")
+app = FastAPI(title="Ciceron — agents")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
