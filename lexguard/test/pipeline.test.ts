@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { beforeAll, describe, expect, it } from "vitest";
 
 process.env.PGLITE_DIR = "memory://";
+process.env.ANTHROPIC_API_KEY = "test"; // la vraie API est remplacée par le fetch simulé ci-dessous
 
 const RURAL = {
   id: "LEGIARTI000043000001",

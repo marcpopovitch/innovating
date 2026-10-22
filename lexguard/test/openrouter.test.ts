@@ -11,6 +11,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   delete process.env.OPENROUTER_API_KEY;
+  delete process.env.OPENAI_API_KEY;
   vi.unstubAllGlobals();
 });
 
@@ -53,5 +54,21 @@ describe("OpenRouter", () => {
     expect(bodies).toHaveLength(2);
     expect(bodies[0].model).toBe("anthropic/claude-haiku-5.5");
     expect(bodies[1].messages.at(-1)).toMatchObject({ role: "tool", tool_call_id: "c1", content: "résultats pour pesticides" });
+  });
+
+  it("GPT passe par OpenAI en direct quand OPENAI_API_KEY existe, le reste par OpenRouter", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      urls.push(url);
+      bodies.push(JSON.parse(String(init.body)));
+      return reply({ role: "assistant", content: '{"ok":true}' });
+    });
+    const schema = z.object({ ok: z.boolean() });
+    await structured(new CostMeter(), "gpt-6-luna", "low", "s", "u", schema);
+    await structured(new CostMeter(), "mistral-large-4", "low", "s", "u", schema);
+    expect(urls).toEqual(["https://api.openai.com/v1/chat/completions", "https://openrouter.ai/api/v1/chat/completions"]);
+    expect(bodies[0]).toMatchObject({ model: "gpt-6-luna", max_completion_tokens: 16000, reasoning_effort: "low" });
+    expect(bodies[0].max_tokens).toBeUndefined();
   });
 });
