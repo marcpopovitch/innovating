@@ -17,6 +17,7 @@ export const VERDICT_STYLE: Record<Verdict, { label: string; className: string }
   doublon: { label: "Doublon", className: "bg-orange/10 text-orange" },
   vide: { label: "Vide juridique", className: "bg-orange/10 text-orange" },
   conforme: { label: "Conforme", className: "bg-ok/10 text-ok" },
+  existant: { label: "Texte existant", className: "bg-[#09f]/10 text-[#0077cc]" },
 };
 
 export const SEVERITY_LABEL: Record<Severity, string> = {
