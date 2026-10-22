@@ -1,15 +1,16 @@
 "use client";
 
-// Espace Analyse : une zone de prompt façon chat. L'IA cadre d'abord la demande
-// (questions), puis les agents travaillent (globe animé), puis les résultats s'affichent.
+// Espace Analyse : on dépose un document (ou un dossier), les agents le contrôlent aussitôt
+// (globe animé), puis les résultats s'affichent. Pas de saisie ni de questions.
 import { AnimatePresence, motion } from "motion/react";
 import { createContext, Suspense, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AGENT_STYLE, SEVERITY_LABEL, VERDICT_STYLE } from "@/components/agent-style";
-import { ChatComposer, MODE_LABEL } from "@/components/chat-composer";
+import { type Document, DocumentDrop, MODE_LABEL } from "@/components/document-drop";
+import { AgentWork, FolderIcon } from "@/components/agent-work";
+import { BrickMascot } from "@/components/brick-mascot";
 import { ArticleViewer, type ViewerTarget } from "@/components/article-viewer";
-import { LoadingGlobe } from "@/components/loading-globe";
-import { MODEL_CHOICES, type AgentEvent, type Analysis, type CadrageQuestion, type CadrageResponse, type Finding, type Mode, type ModelId, type Verdict } from "@/lib/types";
+import { MODEL_CHOICES, type AgentEvent, type Analysis, type Finding, type Mode, type ModelId, type Verdict } from "@/lib/types";
 
 const EXAMPLE = `RÉPUBLIQUE FRANÇAISE — COMMUNE DE SAINT-EXEMPLE
 
@@ -39,28 +40,12 @@ Article 4 — Les infractions au présent arrêté seront constatées par procè
 Fait à Saint-Exemple, le 22 octobre 2026.
 Le Maire`;
 
-const SUGGESTIONS = [
-  { label: "Vérifier un arrêté anti-pesticides", prompt: "Vérifie que mon projet d'arrêté ne contredit pas le droit en vigueur.", example: true },
-  { label: "Ce qui existe sur la vidéoprotection", prompt: "Je réfléchis à installer de la vidéoprotection dans ma commune : qu'est-ce qui existe déjà comme textes ?", example: false },
-  { label: "Encadrer les trottinettes en libre-service", prompt: "Quelles règles existent déjà pour encadrer les trottinettes électriques en libre-service dans une commune ?", example: false },
-];
+type Phase = "vide" | "lancement" | "analyse" | "termine";
 
-// Questions par défaut si le cadrage par l'IA est indisponible.
-function fallbackCadrage(prompt: string, hasText: boolean): CadrageResponse {
-  const controle = hasText || /article\s+\d|arr[êe]te\s*:|délibère/i.test(prompt);
-  return {
-    mode: controle ? "controle" : "exploration",
-    title: prompt.slice(0, 70),
-    reformulation: controle ? "Vous voulez vérifier qu'un texte presque prêt ne contredit pas le droit existant." : "Vous voulez savoir ce qui existe déjà avant de rédiger.",
-    questions: [
-      { id: "domaine", question: "Quel domaine ?", options: ["Police municipale", "Urbanisme", "Environnement", "Santé publique", "Circulation"], allow_free: true, default: null },
-      { id: "periode", question: "Quelle période ?", options: ["Droit en vigueur aujourd'hui", "5 dernières années", "Depuis 2020"], allow_free: true, default: "Droit en vigueur aujourd'hui" },
-      { id: "perimetre", question: "Quel périmètre ?", options: ["France", "France + Union européenne", "Ma collectivité"], allow_free: true, default: "France" },
-    ],
-  };
-}
-
-type Phase = "vide" | "cadrage-chargement" | "cadrage" | "lancement" | "analyse" | "termine";
+// Cadrage appliqué d'office (plus de questions) : droit en vigueur, France + UE.
+const CADRAGE = { periode: "Droit en vigueur aujourd'hui", perimetre: "France + droit de l'UE" };
+// Un dossier peut contenir beaucoup d'actes : on en contrôle au plus 10 par dépôt (coût des modèles).
+const MAX_PAR_DEPOT = 10;
 
 interface ConversationItem {
   id: string;
@@ -88,13 +73,9 @@ export default function AnalysePage() {
 
 function ChatView() {
   const initialId = useSearchParams().get("id");
-  const [prompt, setPrompt] = useState("");
-  const [sentPrompt, setSentPrompt] = useState("");
-  const [attachment, setAttachment] = useState("");
-  const [sentAttachment, setSentAttachment] = useState("");
+  const [doc, setDoc] = useState<Document | null>(null);
   const [model, setModel] = useState<ModelId>("gpt-6-luna");
   const [mode, setMode] = useState<Mode>("controle");
-  const [cadrage, setCadrage] = useState<CadrageResponse | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [phase, setPhase] = useState<Phase>(initialId ? "analyse" : "vide");
   const [error, setError] = useState<string | null>(null);
@@ -163,15 +144,13 @@ function ChatView() {
       setError(null);
       setEvents([]);
       setFindings([]);
-      setCadrage(null);
       setAnalysisId(id);
       setPhase("analyse");
       setDrawer(false);
       window.history.replaceState(null, "", `/app/analyse?id=${id}`);
       const a = await loadResult(id);
       if (!a) return;
-      setSentPrompt(a.input);
-      setSentAttachment("");
+      setDoc({ name: a.title, text: a.input });
       setMode(a.mode ?? "controle");
       setAnswers(a.cadrage ?? {});
       follow(id);
@@ -189,15 +168,11 @@ function ChatView() {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [phase, cadrage, findings.length]);
+  }, [phase, findings.length]);
 
   function newConversation() {
     sourceRef.current?.close();
-    setPrompt("");
-    setAttachment("");
-    setSentPrompt("");
-    setSentAttachment("");
-    setCadrage(null);
+    setDoc(null);
     setAnswers({});
     setAnalysis(null);
     setFindings([]);
@@ -209,93 +184,58 @@ function ChatView() {
     window.history.replaceState(null, "", "/app/analyse");
   }
 
-  // 1. Envoi du prompt → cadrage (questions avant de lancer les agents).
-  async function send() {
-    const text = prompt.trim();
-    if (!text) return;
+  // Documents déposés → une analyse (contrôle) par document, lancée tout de suite.
+  // La première s'affiche ; les autres tournent en fond et apparaissent dans la liste.
+  async function analyse(docs: Document[]) {
+    const batch = docs.slice(0, MAX_PAR_DEPOT);
     sourceRef.current?.close();
     setError(null);
-    setSentPrompt(text);
-    setSentAttachment(attachment);
-    setPrompt("");
-    setAttachment("");
+    setDoc(batch[0]);
+    setAnswers(CADRAGE);
+    setMode("controle");
     setAnalysis(null);
     setFindings([]);
     setEvents([]);
     setAnalysisId(null);
-    setPhase("cadrage-chargement");
-    window.history.replaceState(null, "", "/app/analyse");
-    let result: CadrageResponse;
-    try {
-      const res = await fetch("/api/cadrage", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt: attachment ? `${text}\n\n--- Texte joint ---\n${attachment.slice(0, 8000)}` : text }),
-      });
-      if (!res.ok) throw new Error();
-      result = (await res.json()) as CadrageResponse;
-    } catch {
-      result = fallbackCadrage(text, attachment.length > 0);
-    }
-    setCadrage(result);
-    setMode(result.mode);
-    setAnswers(Object.fromEntries(result.questions.filter((q) => q.default).map((q) => [q.id, q.default as string])));
-    setPhase("cadrage");
-  }
-
-  // 2. Lancement des agents avec les réponses de cadrage.
-  async function launch(useDefaults = false) {
-    if (!cadrage) return;
     setPhase("lancement");
-    setError(null);
-    const cadrageAnswers = useDefaults ? Object.fromEntries(cadrage.questions.filter((q) => q.default).map((q) => [q.id, q.default as string])) : answers;
-    if (useDefaults) setAnswers(cadrageAnswers);
-    const input = sentAttachment ? `${sentPrompt}\n\n--- Texte joint ---\n${sentAttachment}` : sentPrompt;
+    window.history.replaceState(null, "", "/app/analyse");
     try {
-      const res = await fetch("/api/analyses", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: (cadrage.title || sentPrompt).slice(0, 300), input, mode, model, cadrage: cadrageAnswers, collectivite: null, date_acte: null }),
-      });
-      if (res.status === 503) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? "Aucune clé de modèle côté serveur : ajoutez OPENROUTER_API_KEY (ou ANTHROPIC_API_KEY) dans lexguard/.env puis relancez le serveur.");
+      const ids: string[] = [];
+      for (const d of batch) {
+        const res = await fetch("/api/analyses", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: d.name.slice(0, 300), input: d.text, mode: "controle", model, cadrage: CADRAGE, collectivite: null, date_acte: null }),
+        });
+        if (res.status === 503) {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(body?.error ?? "Aucune clé de modèle côté serveur : ajoutez OPENROUTER_API_KEY (ou ANTHROPIC_API_KEY) dans lexguard/.env puis relancez le serveur.");
+        }
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(`${d.name} : ${body?.error ?? `réponse ${res.status}`}`);
+        }
+        ids.push(((await res.json()) as { id: string }).id);
+        if (ids.length === 1) {
+          setAnalysisId(ids[0]);
+          setPhase("analyse");
+          window.history.replaceState(null, "", `/app/analyse?id=${ids[0]}`);
+          follow(ids[0]);
+        }
       }
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? `réponse ${res.status}`);
-      }
-      const { id } = (await res.json()) as { id: string };
-      setAnalysisId(id);
-      setPhase("analyse");
-      window.history.replaceState(null, "", `/app/analyse?id=${id}`);
-      follow(id);
-      void loadConversations();
+      if (docs.length > MAX_PAR_DEPOT) setError(`${docs.length} documents déposés : seuls les ${MAX_PAR_DEPOT} premiers sont analysés.`);
     } catch (e) {
-      setPhase("cadrage");
+      setPhase((p) => (p === "lancement" ? "vide" : p));
       setError(e instanceof Error ? e.message : "Les agents n'ont pas pu démarrer.");
     }
+    void loadConversations();
   }
 
-  const busy = phase === "cadrage-chargement" || phase === "lancement" || phase === "analyse";
+  const busy = phase === "lancement" || phase === "analyse";
   const empty = phase === "vide";
 
-  const composer = (
-    <ChatComposer
-      value={prompt}
-      onChange={setPrompt}
-      onSubmit={send}
-      disabled={busy}
-      model={model}
-      onModel={setModel}
-      attachment={attachment}
-      onAttachment={setAttachment}
-      onExample={() => {
-        setAttachment(EXAMPLE);
-        if (!prompt.trim()) setPrompt("Vérifie que mon projet d'arrêté ne contredit pas le droit en vigueur.");
-      }}
-      autoFocus
-    />
+  const drop = (compact: boolean) => (
+    <DocumentDrop onDocuments={analyse} onExample={() => analyse([{ name: "Exemple — arrêté municipal n° 2026-045", text: EXAMPLE }])} disabled={busy} model={model} onModel={setModel} compact={compact} />
   );
 
   return (
@@ -324,48 +264,20 @@ function ChatView() {
         {empty ? (
           <div className="flex flex-1 flex-col items-center justify-center px-4 pb-24">
             <motion.h1 initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="text-center text-[clamp(30px,4.4vw,48px)] font-medium tracking-[-0.035em]">
-              Comment puis-je vous aider ?
+              Quel acte voulez-vous vérifier aujourd’hui ?
             </motion.h1>
             <p className="mt-3 max-w-[52ch] text-center text-[15px] text-body">
-              Contrôlez un projet d’acte contre tout le droit en vigueur, ou explorez ce qui existe déjà avant de rédiger.
+              Déposez-le : il est contrôlé aussitôt contre tout le droit en vigueur.
             </p>
-            <div className="mt-10 w-full max-w-[760px]">{composer}</div>
-            <div className="mt-5 flex max-w-[760px] flex-wrap justify-center gap-2">
-              {SUGGESTIONS.map((s) => (
-                <button
-                  key={s.label}
-                  type="button"
-                  onClick={() => {
-                    setPrompt(s.prompt);
-                    if (s.example) setAttachment(EXAMPLE);
-                  }}
-                  className="rounded-full border border-line-2 bg-white px-4 py-2 text-[13px] text-body transition-colors hover:border-ink/20 hover:text-ink"
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
+            <div className="mt-10 w-full max-w-[760px]">{drop(false)}</div>
+            {error && <div className="mt-6 max-w-[760px] rounded-[12px] border border-red/30 bg-red/5 px-4 py-3 text-[14px] text-red-deep">{error}</div>}
           </div>
         ) : (
           <>
             <div className="mx-auto w-full max-w-[760px] flex-1 px-4 pt-8 pb-10">
-              <UserBubble text={sentPrompt} attachment={sentAttachment} />
+              {doc && <DocumentBubble doc={doc} />}
 
-              {phase === "cadrage-chargement" && <AssistantTyping label="Je cadre votre demande…" />}
-
-              {cadrage && (phase === "cadrage" || phase === "lancement") && (
-                <CadrageMessage
-                  cadrage={cadrage}
-                  answers={answers}
-                  onAnswer={(id, value) => setAnswers((prev) => ({ ...prev, [id]: value }))}
-                  mode={mode}
-                  onMode={setMode}
-                  model={model}
-                  launching={phase === "lancement"}
-                  onLaunch={() => launch(false)}
-                  onSkip={() => launch(true)}
-                />
-              )}
+              {phase === "lancement" && <AssistantTyping label="Je lance les agents…" />}
 
               {(phase === "analyse" || phase === "termine") && (
                 <>
@@ -379,7 +291,7 @@ function ChatView() {
               <div ref={endRef} />
             </div>
             <div className="sticky bottom-0 bg-gradient-to-t from-white via-white to-white/0 px-4 pt-6 pb-5">
-              <div className="mx-auto max-w-[760px]">{composer}</div>
+              <div className="mx-auto max-w-[760px]">{drop(true)}</div>
             </div>
           </>
         )}
@@ -390,13 +302,21 @@ function ChatView() {
 
 // ---------- Fil de conversation ----------
 
-function UserBubble({ text, attachment }: { text: string; attachment: string }) {
-  const long = text.length > 600;
+function DocumentBubble({ doc }: { doc: Document }) {
+  const excerpt = doc.text.trim().slice(0, 280);
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-[20px] rounded-br-[6px] bg-card px-4 py-3 text-[15px] leading-relaxed text-ink">
-        <p className="whitespace-pre-wrap break-words">{long ? `${text.slice(0, 600)}…` : text}</p>
-        {attachment && <p className="mt-2 text-[12px] text-muted">+ texte joint ({attachment.length.toLocaleString("fr-FR")} caractères)</p>}
+      <div className="max-w-[85%] rounded-[20px] rounded-br-[6px] bg-card px-4 py-3 text-ink">
+        <p className="flex items-center gap-2 text-[15px] font-medium">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0 text-red">
+            <path d="M7 3h7l5 5v13H7z M14 3v5h5" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+          </svg>
+          <span className="break-all">{doc.name}</span>
+        </p>
+        <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-muted">
+          {excerpt}
+          {doc.text.length > excerpt.length && "…"}
+        </p>
       </div>
     </div>
   );
@@ -404,8 +324,8 @@ function UserBubble({ text, attachment }: { text: string; attachment: string }) 
 
 function AssistantAvatar() {
   return (
-    <span className="grid size-8 shrink-0 place-items-center rounded-full bg-ink text-white" aria-hidden="true">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+    <span className="grid size-8 shrink-0 place-items-center" aria-hidden="true">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
         <path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6l-8-3Z" fill="#ff2e2e" />
         <path d="m8.5 12 2.5 2.5 4.5-5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
@@ -422,99 +342,6 @@ function AssistantTyping({ label }: { label: string }) {
         <span className="size-1.5 rounded-full bg-red fl-pulse" />
       </span>
     </div>
-  );
-}
-
-function CadrageMessage(props: {
-  cadrage: CadrageResponse;
-  answers: Record<string, string>;
-  onAnswer: (id: string, value: string) => void;
-  mode: Mode;
-  onMode: (m: Mode) => void;
-  model: ModelId;
-  launching: boolean;
-  onLaunch: () => void;
-  onSkip: () => void;
-}) {
-  const { cadrage, answers, onAnswer, mode, onMode, model, launching, onLaunch, onSkip } = props;
-  return (
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-6 flex gap-3">
-      <AssistantAvatar />
-      <div className="min-w-0 flex-1">
-        <p className="text-[15px] leading-relaxed text-ink">{cadrage.reformulation}</p>
-        <p className="mt-1 text-[14px] text-body">Avant de lancer les agents, quelques précisions (facultatives) pour cibler la recherche :</p>
-
-        <div className="mt-4 inline-flex rounded-full border border-line-2 bg-warm p-1" role="radiogroup" aria-label="Type d'analyse">
-          {(["controle", "exploration"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              role="radio"
-              aria-checked={mode === m}
-              onClick={() => onMode(m)}
-              className={`rounded-full px-4 py-1.5 text-[13px] transition-colors ${mode === m ? "bg-white font-medium text-ink shadow-[var(--shadow-sm)]" : "text-body hover:text-ink"}`}
-            >
-              {MODE_LABEL[m]}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-5 flex flex-col gap-5">
-          {cadrage.questions.map((q) => (
-            <Question key={q.id} q={q} value={answers[q.id] ?? ""} onChange={(v) => onAnswer(q.id, v)} />
-          ))}
-        </div>
-
-        <div className="mt-6 flex flex-wrap items-center gap-3">
-          <button type="button" disabled={launching} onClick={onLaunch} className="fl-btn fl-btn--red">
-            {launching ? "Lancement…" : "Lancer l’analyse"}
-            <span className="fl-btn__arrow" aria-hidden="true">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </span>
-          </button>
-          <button type="button" disabled={launching} onClick={onSkip} className="text-[14px] text-body underline-offset-4 hover:text-ink hover:underline">
-            Passer
-          </button>
-          <span className="text-[12px] text-muted">{MODEL_CHOICES.find((c) => c.id === model)?.label}</span>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-function Question({ q, value, onChange }: { q: CadrageQuestion; value: string; onChange: (v: string) => void }) {
-  const custom = value !== "" && !q.options.includes(value);
-  return (
-    <fieldset>
-      <legend className="text-[14px] font-medium text-ink">{q.question}</legend>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {q.options.map((option) => {
-          const active = value === option;
-          return (
-            <button
-              key={option}
-              type="button"
-              aria-pressed={active}
-              onClick={() => onChange(active ? "" : option)}
-              className={`rounded-full border px-3.5 py-1.5 text-[13px] transition-colors ${active ? "border-ink bg-ink text-white" : "border-line-2 bg-white text-body hover:border-ink/30 hover:text-ink"}`}
-            >
-              {option}
-            </button>
-          );
-        })}
-        {q.allow_free && (
-          <input
-            aria-label={`${q.question} (réponse libre)`}
-            value={custom ? value : ""}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder="Autre…"
-            className={`h-[34px] w-[150px] rounded-full border px-3.5 text-[13px] outline-none focus:border-ink/40 ${custom ? "border-ink" : "border-line-2"}`}
-          />
-        )}
-      </div>
-    </fieldset>
   );
 }
 
@@ -537,8 +364,6 @@ function CadrageSummary({ answers, mode, model }: { answers: Record<string, stri
 }
 
 function WorkBlock({ events, running }: { events: AgentEvent[]; running: boolean }) {
-  const last = [...events].reverse().find((e) => e.type !== "outil") ?? events.at(-1);
-  const lastStyle = last ? AGENT_STYLE[last.agent] ?? AGENT_STYLE.orchestrateur : null;
   return (
     <div className="mt-6 flex gap-3">
       <AssistantAvatar />
@@ -546,34 +371,26 @@ function WorkBlock({ events, running }: { events: AgentEvent[]; running: boolean
         <AnimatePresence initial={false}>
           {running && (
             <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, height: 0 }} className="flex flex-col items-center rounded-[20px] bg-warm px-4 pt-6 pb-5">
-              <LoadingGlobe className="w-[min(320px,70vw)]" />
-              <div className="mt-4 flex min-h-[44px] max-w-full items-start gap-2 text-center" aria-live="polite">
-                {lastStyle && <span className={`mt-[7px] size-2 shrink-0 rounded-full ${lastStyle.dot}`} />}
-                <p className="text-[14px] leading-snug text-body">
-                  {last ? (
-                    <>
-                      <span className="font-medium text-ink">{lastStyle?.label} · </span>
-                      {last.message}
-                    </>
-                  ) : (
-                    "Les agents se mettent au travail…"
-                  )}
-                </p>
-              </div>
+              <AgentWork events={events} />
             </motion.div>
           )}
         </AnimatePresence>
 
-        <details className="mt-3 rounded-[14px] border border-line px-4 py-3" open={!running && events.length > 0 && events.length < 8}>
-          <summary className="cursor-pointer text-[13px] font-medium text-body">
-            {running ? "Travail des agents en direct" : "Travail des agents"} · {events.length} étape{events.length > 1 ? "s" : ""}
-          </summary>
+        <Disclosure
+          className="mt-3 px-4 py-3"
+          title={
+            <>
+              <FolderIcon open={running} size={18} />
+              {running ? "Travail des agents en direct" : "Travail des agents"} · {events.length} étape{events.length > 1 ? "s" : ""}
+            </>
+          }
+        >
           <ol className="mt-3 flex max-h-[360px] flex-col gap-2.5 overflow-y-auto pr-1">
             {events.map((event) => {
               const style = AGENT_STYLE[event.agent] ?? AGENT_STYLE.orchestrateur;
               return (
                 <li key={event.id} className="flex gap-2.5">
-                  <span className={`mt-[7px] size-1.5 shrink-0 rounded-full ${style.dot}`} />
+                  <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-red/70" />
                   <div className="min-w-0">
                     <span className="text-[12px] font-medium">{style.label}</span>
                     <span className="fl-mono ml-2 text-[11px] text-muted">{new Date(event.ts).toLocaleTimeString("fr-FR")}</span>
@@ -585,8 +402,36 @@ function WorkBlock({ events, running }: { events: AgentEvent[]; running: boolean
               );
             })}
           </ol>
-        </details>
+        </Disclosure>
       </div>
+    </div>
+  );
+}
+
+/** Bloc repliable : le contenu se déplie en hauteur au lieu d'apparaître d'un coup. */
+function Disclosure({ title, className = "", children }: { title: React.ReactNode; className?: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`rounded-[14px] border border-line ${className}`}>
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 text-left text-[13px] font-medium text-body hover:text-ink">
+        <motion.svg animate={{ rotate: open ? 90 : 0 }} width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0 text-muted">
+          <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+        </motion.svg>
+        {title}
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            {children}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -612,13 +457,17 @@ function Results({ analysis, findings }: { analysis: Analysis | null; findings: 
           <div>
             <p className="text-[17px] leading-relaxed text-ink">{summary.headline}</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              {ORDER.map((v) =>
-                summary.counts?.[v] ? (
-                  <span key={v} className={`fl-badge ${VERDICT_STYLE[v].className}`}>
-                    {summary.counts[v]} {VERDICT_STYLE[v].label.toLowerCase()}
-                  </span>
-                ) : null,
-              )}
+              {ORDER.filter((v) => summary.counts?.[v]).map((v, i) => (
+                <motion.span
+                  key={v}
+                  initial={{ opacity: 0, scale: 0.6 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.15 + i * 0.07, type: "spring", stiffness: 400, damping: 18 }}
+                  className={`fl-badge ${VERDICT_STYLE[v].className}`}
+                >
+                  {summary.counts[v]} {VERDICT_STYLE[v].label.toLowerCase()}
+                </motion.span>
+              ))}
               {summary.rejected > 0 && <span className="fl-badge bg-card text-body">{summary.rejected} écartée(s) par le contradicteur</span>}
               <span className="fl-badge bg-card text-body">{summary.articles_consulted ?? "—"} articles consultés</span>
               {analysis.latency_ms != null && <span className="fl-badge bg-card text-body">{Math.round(analysis.latency_ms / 1000)} s</span>}
@@ -634,47 +483,47 @@ function Results({ analysis, findings }: { analysis: Analysis | null; findings: 
           </div>
         )}
         <div className="mt-4 flex flex-col gap-4">
-          {main.map((f) => (
-            <FindingCard key={f.id} finding={f} />
+          {main.map((f, i) => (
+            <FindingCard key={f.id} finding={f} index={i} />
           ))}
         </div>
 
         {others.length > 0 && (
-          <details className="mt-4 rounded-[14px] border border-line p-4">
-            <summary className="cursor-pointer text-[13px] font-medium text-body">{others.length} élément(s) conforme(s) ou écarté(s)</summary>
+          <Disclosure className="mt-4 p-4" title={`${others.length} élément(s) conforme(s) ou écarté(s)`}>
             <div className="mt-3 flex flex-col gap-3">
               {others.map((f) => (
                 <FindingCard key={f.id} finding={f} compact />
               ))}
             </div>
-          </details>
+          </Disclosure>
         )}
       </div>
     </motion.div>
   );
 }
 
-function FindingCard({ finding, compact = false }: { finding: Finding; compact?: boolean }) {
+function FindingCard({ finding, compact = false, index = 0 }: { finding: Finding; compact?: boolean; index?: number }) {
   const openSource = useContext(OpenSource);
   const [feedback, setFeedback] = useState<"valide" | "rejete" | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState("");
   const [sending, setSending] = useState(false);
   const [feedbackError, setFeedbackError] = useState(false);
   const verdict = VERDICT_STYLE[finding.verdict] ?? VERDICT_STYLE.conforme;
   const informative = finding.verdict === "existant" || finding.verdict === "conforme";
 
   async function send(decision: "valide" | "rejete") {
-    let reason: string | undefined;
-    if (decision === "rejete") reason = window.prompt("Pourquoi est-ce un faux positif ? (facultatif)") ?? undefined;
     setSending(true);
     setFeedbackError(false);
     try {
       const res = await fetch("/api/feedback", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ finding_id: finding.id, decision, reason }),
+        body: JSON.stringify({ finding_id: finding.id, decision, reason: decision === "rejete" ? reason.trim() || undefined : undefined }),
       });
       if (!res.ok) throw new Error();
       setFeedback(decision);
+      setAsking(false);
     } catch {
       setFeedbackError(true);
     } finally {
@@ -683,14 +532,31 @@ function FindingCard({ finding, compact = false }: { finding: Finding; compact?:
   }
 
   return (
-    <article className={`rounded-[16px] border border-line bg-white ${compact ? "p-4" : "p-5 shadow-[var(--shadow-sm)]"}`}>
+    <motion.article
+      layout
+      initial={{ opacity: 0, y: 18, scale: 0.98 }}
+      animate={{ opacity: feedback === "rejete" ? 0.62 : 1, y: 0, scale: 1, x: 0 }}
+      transition={{ delay: compact ? 0 : 0.2 + index * 0.09, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+      className={`relative overflow-hidden rounded-[16px] border bg-white ${compact ? "p-4" : "p-5 shadow-[var(--shadow-sm)]"} ${
+        feedback === "valide" ? "border-red/40" : "border-line"
+      }`}
+    >
+      {!informative && !compact && (
+        <motion.span
+          aria-hidden="true"
+          initial={{ scaleY: 0 }}
+          animate={{ scaleY: 1 }}
+          transition={{ delay: 0.35 + index * 0.09, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          className="absolute top-0 bottom-0 left-0 w-[3px] origin-top bg-gradient-to-b from-[#ff2e2e] to-[#ff7a2e]"
+        />
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <span className={`fl-badge ${verdict.className}`}>{verdict.label}</span>
         {!informative && <span className="fl-badge bg-card text-body">{SEVERITY_LABEL[finding.severity]}</span>}
-        {finding.verified && !finding.rejection_reason && <span className="fl-badge bg-ok/10 text-ok">Citations vérifiées</span>}
+        {finding.verified && !finding.rejection_reason && <span className="fl-badge bg-red/10 text-red-deep">Citations vérifiées</span>}
         {finding.rejection_reason && <span className="fl-badge bg-card text-muted">Écartée</span>}
       </div>
-      <h3 className={`mt-3 leading-snug tracking-[-0.02em] ${compact ? "text-[15px]" : "text-[18px]"}`}>{finding.title}</h3>
+      <h3 className={`mt-3 leading-snug tracking-[-0.02em] ${compact ? "text-[15px]" : "text-[18px]"} ${feedback === "rejete" ? "line-through decoration-red/50" : ""}`}>{finding.title}</h3>
       {finding.disposition?.text && finding.verdict !== "existant" && (
         <blockquote className="mt-2 border-l-2 border-line-2 pl-3 text-[13px] italic text-muted">{finding.disposition.text}</blockquote>
       )}
@@ -699,17 +565,21 @@ function FindingCard({ finding, compact = false }: { finding: Finding; compact?:
 
       {finding.citations.length > 0 && (
         <div className="mt-4 flex flex-col gap-2">
-          {finding.citations.map((c) => (
+          {finding.citations.map((c, ci) => (
             <motion.button
               type="button"
               key={`${c.article_id}-${c.quote.slice(0, 20)}`}
               onClick={() => openSource({ articleId: c.article_id, quote: c.quote })}
+              initial={{ opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: (compact ? 0 : 0.4 + index * 0.09) + ci * 0.06 }}
               whileHover={{ x: 3 }}
-              className="group block w-full rounded-[10px] border border-line bg-warm px-3.5 py-2.5 text-left transition-colors hover:border-line-2 hover:bg-white"
+              className="group block w-full rounded-[10px] border border-line bg-warm px-3.5 py-2.5 text-left transition-colors hover:border-red/30 hover:bg-white"
             >
               <div className="flex items-center justify-between gap-3">
-                <span className="text-[13px] font-medium">
-                  Art. {c.num} · <span className="text-body">{c.code}</span>
+                <span className="flex items-center gap-2 text-[13px] font-medium">
+                  <FolderIcon size={16} />
+                  Art. {c.num.replace(/^art\.?\s*/i, "")} · <span className="text-body">{c.code}</span>
                 </span>
                 <span className="fl-mono shrink-0 text-[11px] text-muted group-hover:text-red">Voir la source →</span>
               </div>
@@ -719,32 +589,106 @@ function FindingCard({ finding, compact = false }: { finding: Finding; compact?:
         </div>
       )}
 
-      {finding.suggestion && !compact && (
-        <div className="mt-4 rounded-[10px] border border-ok/25 bg-ok/5 px-3.5 py-2.5">
-          <p className="text-[12px] font-medium uppercase tracking-[0.04em] text-ok">{informative ? "À retenir" : "Rédaction proposée"}</p>
-          <p className="mt-1 text-[14px] leading-relaxed text-ink">{finding.suggestion}</p>
-        </div>
-      )}
+      {finding.suggestion && !compact && <Suggestion text={finding.suggestion} label={informative ? "À retenir" : "Rédaction proposée"} delay={0.55 + index * 0.09} />}
 
       {!compact && (
-        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-3">
-          {feedback ? (
-            <span className="text-[13px] text-body">{feedback === "valide" ? "Merci : ajouté à la doctrine interne." : "Merci : faux positif enregistré, les agents en tiendront compte."}</span>
-          ) : (
-            <>
-              <span className="mr-1 text-[13px] text-muted">{informative ? "Utile ?" : "Cette alerte est-elle juste ?"}</span>
-              <button type="button" disabled={sending} onClick={() => send("valide")} className="fl-btn fl-btn--ghost fl-btn--sm">
-                ✓ Pertinent
-              </button>
-              <button type="button" disabled={sending} onClick={() => send("rejete")} className="fl-btn fl-btn--ghost fl-btn--sm">
-                ✗ Faux positif
-              </button>
-              {feedbackError && <span className="text-[13px] text-red-deep">Envoi impossible, réessayez.</span>}
-            </>
-          )}
+        <div className="mt-4 border-t border-line pt-3">
+          <AnimatePresence mode="wait" initial={false}>
+            {feedback ? (
+              <motion.div key="merci" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-2.5 text-[13px] text-body">
+                {feedback === "valide" ? <FiledFolder /> : <BrickMascot size={18} idle />}
+                {feedback === "valide" ? "Rangé dans la doctrine interne." : "Faux positif enregistré : les agents en tiendront compte."}
+              </motion.div>
+            ) : asking ? (
+              <motion.form
+                key="motif"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void send("rejete");
+                }}
+                className="flex flex-wrap items-center gap-2"
+              >
+                <input
+                  autoFocus
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Pourquoi est-ce un faux positif ? (facultatif)"
+                  className="h-9 min-w-[220px] flex-1 rounded-full border border-line-2 px-4 text-[13px] outline-none focus:border-red/40"
+                />
+                <button type="submit" disabled={sending} className="fl-btn fl-btn--red fl-btn--sm">
+                  {sending ? "Envoi…" : "Envoyer"}
+                </button>
+                <button type="button" onClick={() => setAsking(false)} className="text-[13px] text-muted hover:text-ink">
+                  Annuler
+                </button>
+              </motion.form>
+            ) : (
+              <motion.div key="choix" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, y: -4 }} className="flex flex-wrap items-center gap-2">
+                <span className="mr-1 text-[13px] text-muted">{informative ? "Utile ?" : "Cette alerte est-elle juste ?"}</span>
+                <motion.button whileTap={{ scale: 0.92 }} type="button" disabled={sending} onClick={() => send("valide")} className="fl-btn fl-btn--ghost fl-btn--sm hover:border-red/40 hover:text-red-deep">
+                  ✓ Pertinent
+                </motion.button>
+                <motion.button
+                  whileTap={{ scale: 0.92 }}
+                  type="button"
+                  disabled={sending}
+                  onClick={() => setAsking(true)}
+                  className="fl-btn fl-btn--ghost fl-btn--sm hover:border-red/40 hover:text-red-deep"
+                >
+                  ✗ Faux positif
+                </motion.button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          {feedbackError && <p className="mt-2 text-[13px] text-red-deep">Envoi impossible, réessayez.</p>}
         </div>
       )}
-    </article>
+    </motion.article>
+  );
+}
+
+/** Rédaction proposée : le cadre se déplie, puis le texte s'écrit mot à mot. */
+function Suggestion({ text, label, delay }: { text: string; label: string; delay: number }) {
+  const words = text.split(/(\s+)/);
+  const step = Math.min(0.03, 1.4 / words.length);
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay, duration: 0.35 }}
+      className="mt-4 rounded-[12px] border border-red/20 bg-gradient-to-br from-[#fff4f1] to-white px-3.5 py-3"
+    >
+      <p className="flex items-center gap-1.5 text-[12px] font-medium uppercase tracking-[0.04em] text-red-deep">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 20h4L19 9l-4-4L4 16v4Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+        </svg>
+        {label}
+      </p>
+      <p className="mt-1 text-[14px] leading-relaxed text-ink">
+        {words.map((w, i) => (
+          <motion.span key={i} initial={{ opacity: 0, filter: "blur(3px)" }} animate={{ opacity: 1, filter: "blur(0px)" }} transition={{ delay: delay + 0.2 + i * step, duration: 0.25 }}>
+            {w}
+          </motion.span>
+        ))}
+      </p>
+    </motion.div>
+  );
+}
+
+/** « Pertinent » : la feuille ressort du dossier rouge puis y rentre, et le dossier se ferme. */
+function FiledFolder() {
+  const [open, setOpen] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => setOpen(false), 450);
+    return () => clearTimeout(timer);
+  }, []);
+  return (
+    <motion.span initial={{ scale: 0.4, rotate: -12 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: "spring", stiffness: 380, damping: 14 }} className="inline-flex">
+      <FolderIcon open={open} size={22} />
+    </motion.span>
   );
 }
 
