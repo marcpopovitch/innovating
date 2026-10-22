@@ -1,6 +1,7 @@
 """Chat sur une startup et son secteur : base d'abord, web seulement si besoin, sources citées."""
 import re
 
+from agent.analysis import AnalysisOptions, analysis_prompt, prepare_analysis, search_handlers
 from agent.llm import run_agent
 from agent.tools import Toolbox
 from backend import db
@@ -23,7 +24,7 @@ Règles :
 - Réponds dans la langue de la question, de façon concise."""
 
 
-def chat(startup_id: str, message: str) -> dict:
+def chat(startup_id: str, message: str, options: AnalysisOptions | None = None) -> dict:
     startup = db.get_startup(startup_id)
     if not startup:
         raise KeyError(startup_id)
@@ -31,7 +32,12 @@ def chat(startup_id: str, message: str) -> dict:
     history = [{"role": m["role"], "content": m["content"]} for m in db.get_messages(startup_id, limit=10)]
     box = Toolbox(startup)
     system = SYSTEM.format(name=startup["name"], sector=startup.get("sector") or "inconnu")
-    answer = run_agent(system, message, box.definitions(TOOLS), box.handlers(TOOLS), history=history)
+    prompt, handlers = message, box.handlers(TOOLS)
+    if options is not None and not options.is_default():
+        request = prepare_analysis(message, options)
+        prompt = analysis_prompt(message, request, options)
+        handlers = search_handlers(handlers, request, options)
+    answer = run_agent(system, prompt, box.definitions(TOOLS), handlers, history=history)
 
     # Sources effectivement citées : URL vues par les outils ET présentes dans la réponse.
     cited = [{"url": url, "fetched_at": fetched_at} for url, fetched_at in box.seen.items() if url in answer]

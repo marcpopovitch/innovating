@@ -3,12 +3,17 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from agent.analysis import AnalysisOptions
+from backend.analysis import router as analysis_router
 
 from agent import chat as chat_agent
 from agent import orchestrator
 from backend import config, db, memo
+from backend.lexguard import router as lexguard_router
 
 app = FastAPI(title="VC Analyst")
+app.include_router(lexguard_router)
+app.include_router(analysis_router)
 FRONTEND = config.ROOT / "frontend"
 
 
@@ -71,13 +76,16 @@ def analyze(startup_id: str, refresh: bool = False):
 class ChatIn(BaseModel):
     startup_id: str
     message: str
+    options: AnalysisOptions | None = None
 
 
 @app.post("/chat")
 def chat(body: ChatIn):
     _need_claude()
     _startup_or_404(body.startup_id)
-    return chat_agent.chat(body.startup_id, body.message)
+    if body.options is None:
+        return chat_agent.chat(body.startup_id, body.message)
+    return chat_agent.chat(body.startup_id, body.message, options=body.options)
 
 
 @app.get("/chat/{startup_id}")
